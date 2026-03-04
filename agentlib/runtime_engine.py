@@ -62,6 +62,7 @@ from .runtime_state import RuntimeConfig, apply_idle_nudge, load_state, mark_use
 from .screen_capture import capture_screen_to_file
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
+from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
 from .web_search import web_search
 
 
@@ -454,6 +455,9 @@ class RuntimeEngine:
         self._selfdrive_checkpoint_path = self._env_str(
             "SELFDRIVE_CHECKPOINT_PATH", os.path.join("outputs", "selfdrive_kernel_checkpoint.json")
         )
+        self._task_run_log_dir = self._env_str("TASK_RUN_LOG_DIR", os.path.join("outputs", "task_runs"))
+        self._task_run_recorder = TaskRunRecorder(self._task_run_log_dir)
+        self._task_run_current: Optional[TaskRun] = None
         self._guard_confirm_ttl_sec = self._env_float("GUARD_CONFIRM_TTL_SEC", 120.0)
         self._guard_confirm_pending: Dict[str, Any] = {}
         self._threads: List[threading.Thread] = []
@@ -1170,10 +1174,16 @@ class RuntimeEngine:
             is_high_risk_control = True
 
         if conf < threshold:
+            if is_high_risk_control:
+                return {
+                    "suggested_mode": "ask_user_confirm",
+                    "execution_allowed": False,
+                    "reason": f"low_confidence<{threshold:.2f}",
+                }
             return {
-                "suggested_mode": "ask_user_confirm",
+                "suggested_mode": mode or "chat",
                 "execution_allowed": False,
-                "reason": f"low_confidence<{threshold:.2f}",
+                "reason": f"low_confidence_non_control<{threshold:.2f}",
             }
 
         if is_high_risk_control:
@@ -3549,6 +3559,91 @@ class RuntimeEngine:
             "artifacts": [],
         }
 
+    def _task_run_plan_snapshot(self) -> List[Dict[str, Any]]:
+        ks = self._selfdrive_kernel_state
+        if ks is None:
+            return []
+        out: List[Dict[str, Any]] = []
+        for t in list(getattr(ks, "tasks", []) or []):
+            out.append({
+                "task_id": str(getattr(t, "task_id", "") or ""),
+                "kind": str(getattr(t, "kind", "") or ""),
+                "description": str(getattr(t, "description", "") or ""),
+                "status": str(getattr(t, "status", "") or ""),
+            })
+        return out
+
+    def _task_run_start(self, goal: str) -> None:
+        try:
+            self._task_run_current = self._task_run_recorder.start_run(goal=str(goal or ""), plan=self._task_run_plan_snapshot())
+        except Exception:
+            self._task_run_current = None
+
+    def _task_run_finalize(self, status: str) -> None:
+        cur = self._task_run_current
+        if cur is None:
+            return
+        try:
+            self._task_run_recorder.finalize(cur, status=str(status or "done"))
+        except Exception:
+            pass
+
+    def _task_run_record_step(self, *, ts_start: float, ts_end: float, trace_events: List[Dict[str, Any]]) -> None:
+        cur = self._task_run_current
+        if cur is None:
+            return
+        tool_calls: List[Dict[str, Any]] = []
+        output: Dict[str, Any] = {}
+        error = ""
+        status = "ok"
+        input_payload: Dict[str, Any] = {}
+        active_id = ""
+        ks = self._selfdrive_kernel_state
+        if ks is not None:
+            active_id = str(getattr(ks, "active_task_id", "") or "")
+            for t in list(getattr(ks, "tasks", []) or []):
+                if str(getattr(t, "task_id", "") or "") == active_id:
+                    input_payload = dict(getattr(t, "input_payload", {}) or {})
+                    break
+        for evt in list(trace_events or []):
+            if not isinstance(evt, dict):
+                continue
+            ev = str(evt.get("event") or "")
+            if ev == "tool_invocation_record":
+                tool_calls.append({
+                    "tool_name": str(evt.get("tool_name") or ""),
+                    "duration_ms": int(evt.get("duration_ms") or 0),
+                    "error_signature": str(evt.get("error_signature") or ""),
+                    "input_summary": str(evt.get("input_summary") or ""),
+                })
+            elif ev == "worker_result":
+                output = {
+                    "task_id": str(evt.get("task_id") or ""),
+                    "ok": int(evt.get("ok") or 0),
+                    "wait_user": int(evt.get("wait_user") or 0),
+                    "selected_expert": str(evt.get("selected_expert") or ""),
+                }
+                error = str(evt.get("error") or "")
+            elif ev == "failure_routed" and not error:
+                error = str(evt.get("reason") or "")
+        if error:
+            status = "error"
+        step = TaskRunStep(
+            step_id=f"s{len(cur.steps)+1:04d}",
+            ts_start=float(ts_start),
+            ts_end=float(ts_end),
+            duration_ms=int(max(0.0, (float(ts_end)-float(ts_start))) * 1000.0),
+            input_payload=input_payload,
+            tool_calls=tool_calls,
+            output=output,
+            error=error,
+            status=status,
+        )
+        try:
+            self._task_run_recorder.append_step(cur, step)
+        except Exception:
+            pass
+
     def _build_selfdrive_kernel_state(self, goal: str, duration_minutes: Optional[int]) -> KernelAgentState:
         normalized_goal = self._normalize_selfdrive_goal(goal) or "持续推进当前任务"
         default_budget = self._env_int("SELFDRIVE_KERNEL_MAX_STEPS", 40)
@@ -3594,10 +3689,13 @@ class RuntimeEngine:
         if str(ks.status or "") == "failed":
             self.mon["selfdrive_errors"] = int(self.mon.get("selfdrive_errors", 0) or 0) + 1
             self.mon["selfdrive_last_action"] = "failed"
+            self._task_run_finalize("failed")
         elif str(ks.status or "") == "waiting_user":
             self.mon["selfdrive_last_action"] = "waiting_user"
+            self._task_run_finalize("waiting_user")
         elif str(ks.status or "") == "done":
             self.mon["selfdrive_last_action"] = "done"
+            self._task_run_finalize("done")
 
     def _maybe_advance_selfdrive(self, now: Optional[float] = None) -> None:
         ts = float(now if isinstance(now, (int, float)) else time.time())
@@ -3618,10 +3716,15 @@ class RuntimeEngine:
                     return
             if ts < float(self._selfdrive_next_ts or 0.0):
                 return
+            trace_len_before = len(list(getattr(self._selfdrive_kernel_state, "trace", []) or []))
+            ts_step_start = float(time.time())
             self._selfdrive_kernel.run_step(
                 state=self._selfdrive_kernel_state,
                 checkpoint_path=self._selfdrive_checkpoint_path,
             )
+            ts_step_end = float(time.time())
+            trace_new = list(getattr(self._selfdrive_kernel_state, "trace", []) or [])[trace_len_before:]
+            self._task_run_record_step(ts_start=ts_step_start, ts_end=ts_step_end, trace_events=trace_new)
             if self._selfdrive_kernel_state is not None:
                 if str(self._selfdrive_kernel_state.status or "") == "done" and bool(self._selfdrive_unbounded):
                     self._selfdrive_kernel_state = self._build_selfdrive_kernel_state(
@@ -3716,6 +3819,7 @@ class RuntimeEngine:
             self.mon["selfdrive_last_action"] = "start"
             self.mon["selfdrive_brief_path"] = str(self._selfdrive_brief_path or "")
             self._record_selfdrive_heartbeat(event="start")
+            self._task_run_start(normalized_goal)
         budget = "infinite" if duration_minutes is None else f"{int(max(1, int(duration_minutes)))}m"
         brief_flag = "1" if self._selfdrive_brief_text else "0"
         return (
@@ -3739,6 +3843,7 @@ class RuntimeEngine:
             self.mon["selfdrive_last_ts"] = float(now)
             self.mon["selfdrive_last_action"] = f"stop:{str(reason or 'user')}"
             self._record_selfdrive_heartbeat(event="stop", extra={"reason": str(reason or "user")})
+            self._task_run_finalize("stopped")
         return f"[selfdrive] stopped; reason={str(reason or 'user')}"
 
     def _pause_selfdrive_session(self, reason: str = "user") -> str:
@@ -3754,6 +3859,7 @@ class RuntimeEngine:
             self.mon["selfdrive_last_ts"] = float(now)
             self.mon["selfdrive_last_action"] = f"pause:{str(reason or 'user')}"
             self._record_selfdrive_heartbeat(event="pause", extra={"reason": str(reason or "user")})
+            self._task_run_finalize("paused")
         return f"[selfdrive] paused; reason={str(reason or 'user')}"
 
     def _resume_selfdrive_session(self, reason: str = "user") -> str:
