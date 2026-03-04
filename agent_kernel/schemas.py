@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+import time
 from typing import Any, Dict, List, Optional
 
 
 TaskStatus = str
 KernelStatus = str
+RunStatus = str
 TASK_KIND_PLAN_GOAL = "plan_goal"
 TASK_KIND_CODE_TASK = "code_task"
 TASK_KIND_ASK_USER = "ask_user"
+
+RUN_STATUS_PENDING = "pending"
+RUN_STATUS_RUNNING = "running"
+RUN_STATUS_SUCCESS = "success"
+RUN_STATUS_FAILED = "failed"
 
 
 class SubgoalState(str, Enum):
@@ -216,6 +223,103 @@ class AgentState:
             last_error=str(payload.get("last_error") or ""),
             next_task_seq=int(payload.get("next_task_seq") or 1),
         )
+
+
+@dataclass
+class TaskRun:
+    """Structured trace for one end-to-end agent execution."""
+
+    run_id: str
+    goal: str
+    status: RunStatus = RUN_STATUS_PENDING
+    created_at: float = field(default_factory=time.time)
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    summary: Optional[str] = None
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(payload: Dict[str, Any]) -> "TaskRun":
+        return TaskRun(
+            run_id=str(payload.get("run_id") or ""),
+            goal=str(payload.get("goal") or ""),
+            status=str(payload.get("status") or RUN_STATUS_PENDING),
+            created_at=float(payload.get("created_at") or time.time()),
+            started_at=_to_optional_float(payload.get("started_at")),
+            finished_at=_to_optional_float(payload.get("finished_at")),
+            summary=_to_optional_str(payload.get("summary")),
+            error=_to_optional_str(payload.get("error")),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+
+@dataclass
+class StepLog:
+    """Structured trace for one runtime step inside a TaskRun."""
+
+    step_id: str
+    run_id: str
+    step_index: int
+    component: str
+    action: str
+    input_preview: str = ""
+    output_preview: str = ""
+    status: str = RUN_STATUS_PENDING
+    error: Optional[str] = None
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    duration_ms: Optional[int] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(payload: Dict[str, Any]) -> "StepLog":
+        return StepLog(
+            step_id=str(payload.get("step_id") or ""),
+            run_id=str(payload.get("run_id") or ""),
+            step_index=int(payload.get("step_index") or 0),
+            component=str(payload.get("component") or ""),
+            action=str(payload.get("action") or ""),
+            input_preview=str(payload.get("input_preview") or ""),
+            output_preview=str(payload.get("output_preview") or ""),
+            status=str(payload.get("status") or RUN_STATUS_PENDING),
+            error=_to_optional_str(payload.get("error")),
+            started_at=_to_optional_float(payload.get("started_at")),
+            finished_at=_to_optional_float(payload.get("finished_at")),
+            duration_ms=_to_optional_int(payload.get("duration_ms")),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+
+def _to_optional_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    txt = str(value)
+    return txt if txt else None
+
+
+def _to_optional_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _to_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
 def _parse_predicates(value: Any) -> List[Predicate]:
