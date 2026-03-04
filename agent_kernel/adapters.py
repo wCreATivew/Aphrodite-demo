@@ -44,6 +44,22 @@ class GLM5PlannerAdapter:
         }
 
     @staticmethod
+    def _intent_is_actionable(intent: str) -> bool:
+        txt = str(intent or "").strip().lower()
+        if not txt:
+            return False
+        vague_markers = [
+            "think about", "brainstorm", "discuss", "考虑", "想一想", "聊聊", "研究一下", "overview", "idea",
+        ]
+        if any(k in txt for k in vague_markers):
+            return False
+        actionable_markers = [
+            "implement", "fix", "add", "update", "write", "test", "debug", "refactor",
+            "实现", "修复", "新增", "更新", "编写", "测试", "调试", "重构",
+        ]
+        return any(k in txt for k in actionable_markers)
+
+    @staticmethod
     def _fallback_subgoal(goal: str) -> Dict[str, Any]:
         text = str(goal or "").strip()
         return {
@@ -144,12 +160,20 @@ class GLM5PlannerAdapter:
         if not intent:
             issues.append(f"{sid}:missing_intent")
             return None, issues
+        if not self._intent_is_actionable(intent):
+            issues.append(f"{sid}:non_actionable_intent")
+            return None, issues
         if not tool_name:
             issues.append(f"{sid}:missing_tool_name")
             return None, issues
         if not executor_type:
             executor_type = tool_name
         inputs = dict(item.get("inputs") or item.get("input_payload") or {})
+        if str(tool_name).strip().lower() in {TASK_KIND_CODE_TASK, "code", "codex"}:
+            instruction = str(inputs.get("instruction") or "").strip()
+            if not instruction:
+                issues.append(f"{sid}:missing_instruction")
+                return None, issues
         deps = [str(x) for x in (item.get("dependencies") or []) if str(x).strip()]
         preconditions = list(item.get("preconditions") or [])
         if not preconditions:

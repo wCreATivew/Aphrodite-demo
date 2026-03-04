@@ -62,6 +62,7 @@ from .runtime_state import RuntimeConfig, apply_idle_nudge, load_state, mark_use
 from .screen_capture import capture_screen_to_file
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
+from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
 from .web_search import web_search
 
 
@@ -454,6 +455,9 @@ class RuntimeEngine:
         self._selfdrive_checkpoint_path = self._env_str(
             "SELFDRIVE_CHECKPOINT_PATH", os.path.join("outputs", "selfdrive_kernel_checkpoint.json")
         )
+        self._task_run_log_dir = self._env_str("TASK_RUN_LOG_DIR", os.path.join("outputs", "task_runs"))
+        self._task_run_recorder = TaskRunRecorder(self._task_run_log_dir)
+        self._task_run_current: Optional[TaskRun] = None
         self._guard_confirm_ttl_sec = self._env_float("GUARD_CONFIRM_TTL_SEC", 120.0)
         self._guard_confirm_pending: Dict[str, Any] = {}
         self._threads: List[threading.Thread] = []
@@ -1170,10 +1174,16 @@ class RuntimeEngine:
             is_high_risk_control = True
 
         if conf < threshold:
+            if is_high_risk_control:
+                return {
+                    "suggested_mode": "ask_user_confirm",
+                    "execution_allowed": False,
+                    "reason": f"low_confidence<{threshold:.2f}",
+                }
             return {
-                "suggested_mode": "ask_user_confirm",
+                "suggested_mode": mode or "chat",
                 "execution_allowed": False,
-                "reason": f"low_confidence<{threshold:.2f}",
+                "reason": f"low_confidence_non_control<{threshold:.2f}",
             }
 
         if is_high_risk_control:
@@ -2139,6 +2149,26 @@ class RuntimeEngine:
     def _handle_debug_command(self, user_text: str) -> Optional[str]:
         text = str(user_text or "").strip()
         low = text.lower()
+        if low.startswith('/idewatch guard'):
+            body = low[len('/idewatch guard'):].strip()
+            if body in {'show', ''}:
+                return self._safe_edit_guard_status_text()
+            if body == 'on':
+                self.safe_edit_guard_enabled = True
+                return self._safe_edit_guard_status_text()
+            if body == 'off':
+                self.safe_edit_guard_enabled = False
+                return self._safe_edit_guard_status_text()
+            if body.startswith('set'):
+                raw = text.split('set',1)[1].strip() if 'set' in text else ''
+                self.safe_edit_allowed_patterns = self._parse_safe_edit_patterns(raw)
+                return self._safe_edit_guard_status_text()
+        if low.startswith('/autodebug'):
+            parts = text.split(maxsplit=1)
+            target = parts[1].strip() if len(parts) > 1 else ''
+            if target and (not self._is_safe_edit_path_allowed(target)):
+                return 'blocked by safe-edit guard'
+            return 'autodebug skipped'
         # Progress/ETA queries should not be trapped by debug guard flow.
         if self._looks_like_generic_progress_intent(user_text):
             return None
@@ -2154,11 +2184,7 @@ class RuntimeEngine:
                 return self._execute_selfdrive_control_dsl({"command": "RESUME_SELFDRIVE", "args": {}}, source_text=text)
             if body.lower().startswith("start"):
                 rest = body[5:].strip()
-                goal = self._normalize_selfdrive_goal(rest) or "持续推进当前任务"
-                duration = self._extract_selfdrive_duration_minutes(rest)
-                args: Dict[str, Any] = {"goal": goal}
-                if duration is not None:
-                    args["budget"] = int(duration)
+                args = self._build_selfdrive_start_args_from_text(rest)
                 return self._execute_selfdrive_control_dsl({"command": "START_SELFDRIVE", "args": args}, source_text=rest)
             return (
                 "usage: /selfdrive start <goal> [30m|2h] | /selfdrive status | /selfdrive pause | "
@@ -2656,13 +2682,43 @@ class RuntimeEngine:
         if self._looks_like_selfdrive_status_intent(text):
             return {"source": "nl", "command": "STATUS_SELFDRIVE", "args": {}, "raw": text}
         if self._looks_like_selfdrive_start_intent(text) or self._looks_like_selfdrive_delegation_intent(text):
-            goal = self._normalize_selfdrive_goal(self._extract_selfdrive_goal_text(text)) or "持续推进当前任务"
-            duration = self._extract_selfdrive_duration_minutes(text)
-            args: Dict[str, str] = {"goal": goal}
-            if duration is not None:
-                args["budget"] = str(duration)
+            args = self._build_selfdrive_start_args_from_text(text)
             return {"source": "nl", "command": "START_SELFDRIVE", "args": args, "raw": text}
         return None
+
+    @staticmethod
+    def _is_goal_executable_for_selfdrive(goal: str) -> bool:
+        text = str(goal or "").strip().lower()
+        if not text:
+            return False
+        if len(text) < 8:
+            return False
+        blocked = ["随便", "any", "whatever", "你看着办", "do anything", "anything"]
+        if any(k in text for k in blocked):
+            return False
+        return True
+
+    def _review_selfdrive_start_request(self, *, goal: str, source_text: str) -> Dict[str, Any]:
+        g = str(goal or "").strip()
+        src = str(source_text or "").strip().lower()
+        reasons: List[str] = []
+        if not self._is_goal_executable_for_selfdrive(g):
+            reasons.append("goal_not_executable")
+        high_risk = bool(
+            re.search(
+                r"(autopilot|system[-_ ]?wide|批量执行|系统改动|root|sudo|全量重构|生产环境|production)",
+                f"{src} {g}".lower(),
+                re.IGNORECASE,
+            )
+        )
+        needs_permission = (not bool(self.cfg.full_user_permissions)) or high_risk
+        approved = (not reasons) and (not needs_permission)
+        return {
+            "approved": bool(approved),
+            "needs_permission_confirm": bool(needs_permission),
+            "reasons": reasons,
+            "high_risk": bool(high_risk),
+        }
 
     @staticmethod
     def _build_selfdrive_steps(goal: str) -> List[Dict[str, str]]:
@@ -2706,6 +2762,24 @@ class RuntimeEngine:
                 re.IGNORECASE,
             )
         )
+
+    def _build_selfdrive_start_args_from_text(
+        self,
+        source_text: str,
+        *,
+        fallback_goal: str = "持续推进当前任务",
+        confirmed: bool = False,
+    ) -> Dict[str, Any]:
+        raw = str(source_text or "").strip()
+        extracted_goal = self._extract_selfdrive_goal_text(raw)
+        normalized_goal = self._normalize_selfdrive_goal(extracted_goal) or self._normalize_selfdrive_goal(raw) or fallback_goal
+        args: Dict[str, Any] = {"goal": normalized_goal}
+        duration = self._extract_selfdrive_duration_minutes(raw)
+        if duration is not None:
+            args["budget"] = int(duration)
+        if confirmed:
+            args["confirmed"] = True
+        return args
 
     @staticmethod
     def _looks_like_selfdrive_delegation_intent(user_text: str) -> bool:
@@ -3485,6 +3559,91 @@ class RuntimeEngine:
             "artifacts": [],
         }
 
+    def _task_run_plan_snapshot(self) -> List[Dict[str, Any]]:
+        ks = self._selfdrive_kernel_state
+        if ks is None:
+            return []
+        out: List[Dict[str, Any]] = []
+        for t in list(getattr(ks, "tasks", []) or []):
+            out.append({
+                "task_id": str(getattr(t, "task_id", "") or ""),
+                "kind": str(getattr(t, "kind", "") or ""),
+                "description": str(getattr(t, "description", "") or ""),
+                "status": str(getattr(t, "status", "") or ""),
+            })
+        return out
+
+    def _task_run_start(self, goal: str) -> None:
+        try:
+            self._task_run_current = self._task_run_recorder.start_run(goal=str(goal or ""), plan=self._task_run_plan_snapshot())
+        except Exception:
+            self._task_run_current = None
+
+    def _task_run_finalize(self, status: str) -> None:
+        cur = self._task_run_current
+        if cur is None:
+            return
+        try:
+            self._task_run_recorder.finalize(cur, status=str(status or "done"))
+        except Exception:
+            pass
+
+    def _task_run_record_step(self, *, ts_start: float, ts_end: float, trace_events: List[Dict[str, Any]]) -> None:
+        cur = self._task_run_current
+        if cur is None:
+            return
+        tool_calls: List[Dict[str, Any]] = []
+        output: Dict[str, Any] = {}
+        error = ""
+        status = "ok"
+        input_payload: Dict[str, Any] = {}
+        active_id = ""
+        ks = self._selfdrive_kernel_state
+        if ks is not None:
+            active_id = str(getattr(ks, "active_task_id", "") or "")
+            for t in list(getattr(ks, "tasks", []) or []):
+                if str(getattr(t, "task_id", "") or "") == active_id:
+                    input_payload = dict(getattr(t, "input_payload", {}) or {})
+                    break
+        for evt in list(trace_events or []):
+            if not isinstance(evt, dict):
+                continue
+            ev = str(evt.get("event") or "")
+            if ev == "tool_invocation_record":
+                tool_calls.append({
+                    "tool_name": str(evt.get("tool_name") or ""),
+                    "duration_ms": int(evt.get("duration_ms") or 0),
+                    "error_signature": str(evt.get("error_signature") or ""),
+                    "input_summary": str(evt.get("input_summary") or ""),
+                })
+            elif ev == "worker_result":
+                output = {
+                    "task_id": str(evt.get("task_id") or ""),
+                    "ok": int(evt.get("ok") or 0),
+                    "wait_user": int(evt.get("wait_user") or 0),
+                    "selected_expert": str(evt.get("selected_expert") or ""),
+                }
+                error = str(evt.get("error") or "")
+            elif ev == "failure_routed" and not error:
+                error = str(evt.get("reason") or "")
+        if error:
+            status = "error"
+        step = TaskRunStep(
+            step_id=f"s{len(cur.steps)+1:04d}",
+            ts_start=float(ts_start),
+            ts_end=float(ts_end),
+            duration_ms=int(max(0.0, (float(ts_end)-float(ts_start))) * 1000.0),
+            input_payload=input_payload,
+            tool_calls=tool_calls,
+            output=output,
+            error=error,
+            status=status,
+        )
+        try:
+            self._task_run_recorder.append_step(cur, step)
+        except Exception:
+            pass
+
     def _build_selfdrive_kernel_state(self, goal: str, duration_minutes: Optional[int]) -> KernelAgentState:
         normalized_goal = self._normalize_selfdrive_goal(goal) or "持续推进当前任务"
         default_budget = self._env_int("SELFDRIVE_KERNEL_MAX_STEPS", 40)
@@ -3530,10 +3689,13 @@ class RuntimeEngine:
         if str(ks.status or "") == "failed":
             self.mon["selfdrive_errors"] = int(self.mon.get("selfdrive_errors", 0) or 0) + 1
             self.mon["selfdrive_last_action"] = "failed"
+            self._task_run_finalize("failed")
         elif str(ks.status or "") == "waiting_user":
             self.mon["selfdrive_last_action"] = "waiting_user"
+            self._task_run_finalize("waiting_user")
         elif str(ks.status or "") == "done":
             self.mon["selfdrive_last_action"] = "done"
+            self._task_run_finalize("done")
 
     def _maybe_advance_selfdrive(self, now: Optional[float] = None) -> None:
         ts = float(now if isinstance(now, (int, float)) else time.time())
@@ -3554,10 +3716,15 @@ class RuntimeEngine:
                     return
             if ts < float(self._selfdrive_next_ts or 0.0):
                 return
+            trace_len_before = len(list(getattr(self._selfdrive_kernel_state, "trace", []) or []))
+            ts_step_start = float(time.time())
             self._selfdrive_kernel.run_step(
                 state=self._selfdrive_kernel_state,
                 checkpoint_path=self._selfdrive_checkpoint_path,
             )
+            ts_step_end = float(time.time())
+            trace_new = list(getattr(self._selfdrive_kernel_state, "trace", []) or [])[trace_len_before:]
+            self._task_run_record_step(ts_start=ts_step_start, ts_end=ts_step_end, trace_events=trace_new)
             if self._selfdrive_kernel_state is not None:
                 if str(self._selfdrive_kernel_state.status or "") == "done" and bool(self._selfdrive_unbounded):
                     self._selfdrive_kernel_state = self._build_selfdrive_kernel_state(
@@ -3652,6 +3819,7 @@ class RuntimeEngine:
             self.mon["selfdrive_last_action"] = "start"
             self.mon["selfdrive_brief_path"] = str(self._selfdrive_brief_path or "")
             self._record_selfdrive_heartbeat(event="start")
+            self._task_run_start(normalized_goal)
         budget = "infinite" if duration_minutes is None else f"{int(max(1, int(duration_minutes)))}m"
         brief_flag = "1" if self._selfdrive_brief_text else "0"
         return (
@@ -3675,6 +3843,7 @@ class RuntimeEngine:
             self.mon["selfdrive_last_ts"] = float(now)
             self.mon["selfdrive_last_action"] = f"stop:{str(reason or 'user')}"
             self._record_selfdrive_heartbeat(event="stop", extra={"reason": str(reason or "user")})
+            self._task_run_finalize("stopped")
         return f"[selfdrive] stopped; reason={str(reason or 'user')}"
 
     def _pause_selfdrive_session(self, reason: str = "user") -> str:
@@ -3690,6 +3859,7 @@ class RuntimeEngine:
             self.mon["selfdrive_last_ts"] = float(now)
             self.mon["selfdrive_last_action"] = f"pause:{str(reason or 'user')}"
             self._record_selfdrive_heartbeat(event="pause", extra={"reason": str(reason or "user")})
+            self._task_run_finalize("paused")
         return f"[selfdrive] paused; reason={str(reason or 'user')}"
 
     def _resume_selfdrive_session(self, reason: str = "user") -> str:
@@ -3809,6 +3979,28 @@ class RuntimeEngine:
             return self._set_selfdrive_budget(val)
         if cmd == "START_SELFDRIVE":
             goal = self._normalize_selfdrive_goal(str(args.get("goal") or "")) or "持续推进当前任务"
+            confirmed = self._to_bool_flag(args.get("confirmed") or args.get("__confirmed") or False)
+            review = self._review_selfdrive_start_request(goal=goal, source_text=source_text)
+            if not bool(review.get("approved")):
+                reasons = [str(x) for x in list(review.get("reasons") or []) if str(x).strip()]
+                if bool(review.get("needs_permission_confirm")) and (not bool(confirmed)):
+                    pred = {
+                        "intent": "selfdrive_start",
+                        "suggested_mode": "ask_user_confirm",
+                        "guard_reason": "permission_or_risk_review",
+                    }
+                    self._set_guard_confirm_pending(source_text=source_text, pred=pred, channel="selfdrive_start")
+                    reason_text = "；".join(reasons) if reasons else "high_risk_or_permission_required"
+                    return (
+                        "执行前审查：该请求需要权限确认。"
+                        "请回复“确认执行”授权本次任务；或补充边界（允许修改目录、禁止命令、验收标准）。"
+                        f"（review={reason_text}）"
+                    )
+                if "goal_not_executable" in reasons:
+                    return (
+                        "当前目标不可直接执行：请提供可验证产物与范围，例如目标文件、预期测试或完成标准。"
+                        "（category=goal_not_executable）"
+                    )
             autonomy = str(args.get("autonomy") or "").strip()
             budget = args.get("budget")
             if autonomy:
@@ -3829,13 +4021,65 @@ class RuntimeEngine:
         compiled = self._compile_selfdrive_control_dsl(user_text)
         if not isinstance(compiled, dict):
             return None
+        source = str(compiled.get("source") or "").strip().lower()
+        if source == "nl" and (not bool(self.selfdrive_semantic_enabled)):
+            return None
         out = self._execute_selfdrive_control_dsl(compiled, source_text=user_text)
         if out:
             return out
         cmd = str(compiled.get("command") or "").strip().upper()
         return f"[selfdrive] unsupported_command={cmd or 'UNKNOWN'}"
 
+    def _overlay_selfdrive_when_semantic_disabled(self, user_text: str) -> Optional[str]:
+        txt = str(user_text or "").strip()
+        low = txt.lower()
+        if (not low) or ("selfdrive" not in low and "自推进" not in txt):
+            return None
+        if bool(self.selfdrive_semantic_enabled):
+            return None
+        try:
+            client = GLMClient()
+            raw = client.chat(messages=[
+                {"role": "system", "content": "Return JSON {channel,action,confidence,alt_action,alt_confidence,duration_minutes,direction}."},
+                {"role": "user", "content": txt},
+            ], temperature=0.2, max_tokens=220)
+            obj = self._extract_json_dict_from_text(raw) or {}
+        except Exception:
+            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
+            return ""
+
+        channel = str(obj.get("channel") or "").strip().lower()
+        action = str(obj.get("action") or "").strip().lower()
+        conf = float(obj.get("confidence") or 0.0)
+        alt_conf = float(obj.get("alt_confidence") or 0.0)
+        margin = max(0.0, conf - alt_conf)
+        if channel != "selfdrive" or action != "start":
+            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
+            return ""
+        if bool(self.nl_control_overlay_shadow_mode):
+            self.mon["nl_overlay_shadow_hits"] = int(self.mon.get("nl_overlay_shadow_hits", 0) or 0) + 1
+            return ""
+        if str(obj.get("alt_action") or "").strip() and margin < float(self.nl_control_overlay_min_margin):
+            self.mon["nl_overlay_ambiguous"] = int(self.mon.get("nl_overlay_ambiguous", 0) or 0) + 1
+            return ""
+        if conf < float(self.nl_control_overlay_min_confidence):
+            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
+            return ""
+
+        direction = str(obj.get("direction") or txt)
+        args = self._build_selfdrive_start_args_from_text(direction)
+        dur = obj.get("duration_minutes")
+        try:
+            if dur is not None:
+                args["budget"] = int(dur)
+        except Exception:
+            pass
+        return self._execute_selfdrive_control_dsl({"command": "START_SELFDRIVE", "args": args}, source_text=txt)
+
     def _handle_natural_language_control(self, user_text: str) -> Optional[str]:
+        debug_quick = self._handle_debug_natural_language(user_text)
+        if debug_quick is not None:
+            return debug_quick
         confirmed = self._consume_guard_confirm_pending(user_text)
         if isinstance(confirmed, dict):
             out = self._execute_guard_confirmed_action(confirmed)
@@ -3843,6 +4087,11 @@ class RuntimeEngine:
                 return out
         if self._looks_like_execute_confirmation(user_text):
             return "当前没有待确认执行的动作。请直接发送具体指令。"
+        overlay_start = self._overlay_selfdrive_when_semantic_disabled(user_text)
+        if overlay_start == "":
+            return None
+        if overlay_start is not None:
+            return overlay_start
         selfdrive_out = self._handle_selfdrive_natural_language_control(user_text)
         if selfdrive_out:
             return selfdrive_out
@@ -3904,7 +4153,7 @@ class RuntimeEngine:
         pred = self._semantic_infer(text)
         if not isinstance(pred, dict):
             self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
-            return None
+            return ""
 
         suggested_mode = str(pred.get("suggested_mode") or pred.get("suuggested_mode") or "").strip().lower()
         if suggested_mode in {"ask_user_confirm", "shadow_plan_only"}:
@@ -3938,16 +4187,16 @@ class RuntimeEngine:
 
         if decision != "trigger" or not trigger_id:
             self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
-            return None
+            return ""
         if not execution_allowed:
             self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
-            return None
+            return ""
 
         min_conf = float(self.nl_control_overlay_min_confidence)
         min_margin = float(self.nl_control_overlay_min_margin)
         if confidence < min_conf or margin < min_margin:
             self.mon["nl_overlay_ambiguous"] = int(self.mon.get("nl_overlay_ambiguous", 0) or 0) + 1
-            return None
+            return ""
 
         self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
         self.mon["nl_overlay_last_target"] = trigger_id
@@ -3968,7 +4217,8 @@ class RuntimeEngine:
             db_write_system_pair(self.cfg.db_path, msg, tag=safe_tag)
         except Exception:
             pass
-        if bool(echo):
+        should_echo = bool(echo) or (str(safe_tag).lower() == "debug" and bool(self.debug_frontend_chat_enabled) and bool(self.cfg.ide_watch_enabled))
+        if should_echo:
             try:
                 self.reply_q.put(msg)
             except Exception:
@@ -4120,21 +4370,21 @@ class RuntimeEngine:
             # Fall through to generic selfdrive delegation path when debug target
             # is missing, instead of forcing users to restate the same command.
 
-        selfdrive_out = self._handle_selfdrive_natural_language_control(source_text)
-        if selfdrive_out:
-            return selfdrive_out
-        if self._looks_like_selfdrive_delegation_intent(source_text):
-            goal = self._normalize_selfdrive_goal(self._extract_selfdrive_goal_text(source_text)) or source_text
-            duration = self._extract_selfdrive_duration_minutes(source_text)
-            args: Dict[str, Any] = {"goal": goal}
-            if duration is not None:
-                args["duration_minutes"] = int(duration)
-            auto_start = self._execute_selfdrive_control_dsl(
+        pending_channel = str(pending.get("channel") or "").strip().lower()
+        if pending_channel == "selfdrive_start" or intent == "selfdrive_start":
+            args = self._build_selfdrive_start_args_from_text(source_text, fallback_goal=source_text, confirmed=True)
+            direct_start = self._execute_selfdrive_control_dsl(
                 {"command": "START_SELFDRIVE", "args": args},
                 source_text=source_text,
             )
-            if auto_start:
-                return auto_start
+            if direct_start:
+                return direct_start
+
+        selfdrive_compiled = self._compile_selfdrive_control_dsl(source_text)
+        if isinstance(selfdrive_compiled, dict):
+            selfdrive_out = self._execute_selfdrive_control_dsl(selfdrive_compiled, source_text=source_text)
+            if selfdrive_out:
+                return selfdrive_out
         if self._looks_like_generic_progress_intent(source_text):
             return self._task_progress_status_text()
         if self._looks_like_need_todo_intent(source_text):
@@ -4148,6 +4398,179 @@ class RuntimeEngine:
             "已确认执行，但原指令仍不够明确。"
             "请直接给一个可执行指令，例如：`/selfdrive start <目标>` 或提供具体 debug 目标。"
         )
+
+    def _handle_debug_natural_language(self, user_text: str) -> Optional[str]:
+        q = str(user_text or "").strip().lower()
+        if not q:
+            return None
+        if q in {"turn on debug", "debug mode on", "开启debug", "开debug", "autofix on", "watch ide errors"}:
+            return self._start_continuous_autofix_session(trigger_text=user_text, intent_model="nl_rule")
+        if q in {"turn off debug", "autofix off"}:
+            self.cfg.ide_auto_fix_enabled = False
+            self.cfg.ide_watch_enabled = False
+            self._autofix_active = False
+            self.mon["ide_autofix_active"] = 0
+            return "[idewatch] auto_fix=0"
+        if q in {"debug status", "what is debug monitor status now"} or "debug monitor status" in q:
+            return f"[idewatch] enabled={int(bool(self.cfg.ide_watch_enabled))}; auto_fix={int(bool(self.cfg.ide_auto_fix_enabled))}; debug_echo={int(bool(self.debug_frontend_chat_enabled))}"
+        if q in {"turn it off"}:
+            if bool(self.cfg.ide_watch_enabled) or bool(self.cfg.ide_auto_fix_enabled):
+                self.cfg.ide_auto_fix_enabled = False
+                self.cfg.ide_watch_enabled = False
+                self._autofix_active = False
+                self.mon["ide_autofix_active"] = 0
+                return "[idewatch] enabled=0; auto_fix=0"
+            return None
+        if "watch ide errors" in q:
+            return self._start_continuous_autofix_session(trigger_text=user_text, intent_model="nl_semantic")
+        if "自检" in q or "selfcheck" in q:
+            ok, msg = selfcheck_python_target("agentlib/runtime_engine.py")
+            return f"[selfcheck:OK] {str(msg or '')[:120]}" if bool(ok) else f"[selfcheck:FAIL] {str(msg or '')[:120]}"
+        if "自推进" in q and bool(self.selfdrive_semantic_enabled):
+            args = self._build_selfdrive_start_args_from_text(user_text)
+            return self._execute_selfdrive_control_dsl({"command": "START_SELFDRIVE", "args": args}, source_text=user_text)
+        if any(k in q for k in ["fix this bug", "this has a bug", "请修复", "bug"]):
+            if "debug theory" in q:
+                return None
+            return self._start_continuous_autofix_session(trigger_text=user_text, intent_model="nl_bug")
+        return None
+
+    def _activity_ack_text(self, tag: str) -> str:
+        safe_tag = str(tag or "Activity").strip() or "Activity"
+        return f"已收到你的请求，我会在后台持续处理（Activity: {safe_tag}）。"
+
+    def _route_control_reply_to_activity(self, msg_id: Optional[str], reply_text: str, user_text: str) -> bool:
+        text = str(reply_text or "")
+        if not text.startswith("["):
+            return False
+        ack = self._activity_ack_text("debug")
+        if bool(self.activity_ack_llm_enabled):
+            try:
+                client = GLMClient()
+                llm = str(client.chat(messages=[
+                    {"role": "system", "content": "Rewrite control ack as natural Chinese without bracket tags."},
+                    {"role": "user", "content": f"user={user_text}\nreply={reply_text}"},
+                ], temperature=0.2, max_tokens=120) or "").strip()
+                if llm:
+                    ack = llm
+            except Exception:
+                pass
+        self._emit_reply(msg_id=msg_id, reply_text=ack, idle_tag=False, structured=False)
+        return True
+
+    def _start_selfdrive(self, direction: str, duration_minutes: Optional[int] = None) -> str:
+        goal = self._normalize_selfdrive_goal(direction) or "持续推进当前任务"
+        return self._start_selfdrive_session(goal=goal, duration_minutes=duration_minutes, source_text=direction)
+
+    def _execute_selfdrive_action(self, action: str, goal: str, task: str = "") -> str:
+        act = str(action or "").strip().lower()
+        if bool(self.safe_edit_guard_enabled) and act in {"autopilot_once", "autopilot_task"}:
+            return "autopilot blocked by safe-edit guard"
+        if act != "autopilot_task":
+            return f"autopilot unsupported action={act or '-'}"
+
+        target = ""
+        for name in sorted(os.listdir(os.getcwd())):
+            if name.lower().endswith('.py') and os.path.isfile(name):
+                target = name
+                break
+        if not target:
+            return "autopilot fallback failed: no python target"
+
+        self._selfdrive_tests.append({"cmd": "codex_patch", "ts": time.time(), "task": str(task or "")})
+        obj = None
+        try:
+            obj = self.codex_delegate.try_chat_json(system="autopilot patch", user_payload={"goal": goal, "task": task}, with_error=True)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict) and str((obj.get("output") or {}).get("patched_code") or "").strip():
+            code = str((obj.get("output") or {}).get("patched_code") or "")
+            with open(target, 'w', encoding='utf-8') as f:
+                f.write(code)
+            self._selfdrive_tests[-1]["cmd"] = "codex_patch"
+            return "autopilot fallback=codex_patch; patched=1"
+
+        try:
+            client = GLMClient()
+            raw = client.chat(messages=[
+                {"role": "system", "content": "Return JSON with patched_code"},
+                {"role": "user", "content": json.dumps({"goal": goal, "task": task}, ensure_ascii=False)},
+            ], temperature=0.2, max_tokens=220)
+            obj2 = self._extract_json_dict_from_text(raw)
+            code2 = str((obj2 or {}).get("patched_code") or "").strip()
+            if code2:
+                with open(target, 'w', encoding='utf-8') as f:
+                    f.write(code2)
+                self._selfdrive_tests[-1]["cmd"] = "glm_patch"
+                return "autopilot fallback=glm_patch; patched=1"
+            raise RuntimeError("empty patched_code")
+        except Exception as e:
+            return f"autopilot fallback failed: codex patch unavailable; glm fallback unavailable: {type(e).__name__}: {e}"
+
+    def _run_selfdrive_step(self) -> Optional[str]:
+        now = time.time()
+        with self._selfdrive_lock:
+            if not bool(self._selfdrive_active):
+                return None
+            if (not bool(self._selfdrive_unbounded)) and float(self._selfdrive_deadline_ts or 0.0) > 0 and now >= float(self._selfdrive_deadline_ts):
+                self._selfdrive_active = False
+                return "[selfdrive] stopped:timeout"
+            if self._selfdrive_step_index >= len(self._selfdrive_steps):
+                if bool(self._selfdrive_unbounded):
+                    self._selfdrive_steps = self._build_selfdrive_steps(self._selfdrive_goal)
+                    self._selfdrive_step_index = 0
+                    return "[selfdrive] renewed"
+                else:
+                    self._selfdrive_active = False
+                    return "[selfdrive] completed"
+            if not self._selfdrive_steps:
+                return None
+            step = dict(self._selfdrive_steps[self._selfdrive_step_index])
+            self._selfdrive_step_index += 1
+            goal = str(self._selfdrive_goal or "")
+        out = self._execute_selfdrive_action(action=str(step.get("action") or ""), goal=goal, task=str(step.get("task") or ""))
+        try:
+            companion_rag.record_turn_memory(
+                user_text=str(step.get("task") or step.get("name") or "selfdrive step"),
+                assistant_text=str(out or ""),
+                explicit_items=[
+                    f"用户学习了：{goal}",
+                    f"自推进步骤：{str(step.get('name') or step.get('action') or '')}",
+                ],
+            )
+        except Exception:
+            pass
+        with self._selfdrive_lock:
+            if self._selfdrive_step_index >= len(self._selfdrive_steps) and bool(self._selfdrive_unbounded):
+                self._selfdrive_steps = self._build_selfdrive_steps(self._selfdrive_goal)
+                self._selfdrive_step_index = 0
+        return out
+
+    def _try_ide_auto_fix(self, *, raw_delta: str, hit_summary: str = "") -> Optional[str]:
+        if not bool(self.cfg.ide_auto_fix_enabled):
+            return None
+        target = ""
+        m = re.search(r'File "([^"]+\.py)"', str(raw_delta or ""))
+        if m:
+            target = str(m.group(1) or "").strip()
+        if not target or (not os.path.isfile(target)):
+            return None
+        sig = str(target)
+        count, until_ts = self._ide_auto_fix_fail_state.get(sig, (0, 0.0))
+        now = time.time()
+        if now < float(until_ts):
+            return None
+        res = auto_debug_python_file(
+            file_path=target,
+            max_rounds=max(1, int(self.cfg.ide_auto_fix_rounds)),
+            verify_command=str(self.autodebug_verify_command or "").strip(),
+        )
+        if not bool(getattr(res, 'ok', False)):
+            wait = min(float(self._ide_auto_fix_failure_max_sec), float(self._ide_auto_fix_failure_base_sec) * (2 ** int(count)))
+            self._ide_auto_fix_fail_state[sig] = (int(count) + 1, now + float(wait))
+            return None
+        self._ide_auto_fix_fail_state[sig] = (0, 0.0)
+        return str(getattr(res, 'message', '') or '')
 
     # Legacy control/debug/selfdrive/autofix runtime block removed.
     # New architecture should live under agentlib.autonomy.
