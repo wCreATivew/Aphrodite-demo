@@ -64,6 +64,7 @@ from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_sp
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
 from .web_search import web_search
+from router.llm_router import RouterAction, RouterScope, route_intent
 
 
 DEFAULT_RAG_KB = [
@@ -202,6 +203,7 @@ class RuntimeEngine:
         self.debug_local_model_enabled = self._env_bool("DEBUG_LOCAL_MODEL_ENABLED", "1")
         self.nl_intent_echo_enabled = self._env_bool("NL_INTENT_ECHO_ENABLED", "0")
         self.nl_control_overlay_semantic_enabled = self._env_bool("NL_CONTROL_OVERLAY_SEMANTIC_ENABLED", "1")
+        self.bdllm_router_enabled = self._env_bool("BDLLM_ROUTER_ENABLED", "1")
         self.nl_control_overlay_min_confidence = self._env_float("NL_CONTROL_OVERLAY_MIN_CONFIDENCE", 0.74)
         self.nl_control_overlay_shadow_mode = self._env_bool("NL_CONTROL_OVERLAY_SHADOW_MODE", "0")
         self.semantic_guard_conf_threshold = self._env_float(
@@ -3700,8 +3702,34 @@ class RuntimeEngine:
                     "selected_expert": str(evt.get("selected_expert") or ""),
                 }
                 error = str(evt.get("error") or "")
+                _append_log(
+                    component="worker",
+                    action="execute",
+                    inp={"task_id": evt.get("task_id"), "selected_expert": evt.get("selected_expert")},
+                    out={"ok": evt.get("ok"), "wait_user": evt.get("wait_user")},
+                    success=bool(int(evt.get("ok") or 0)),
+                    error=error,
+                )
+                if str(evt.get("selected_expert") or "") == "codex":
+                    _append_log(
+                        component="codex_delegate",
+                        action="delegate_call",
+                        inp={"task_id": evt.get("task_id")},
+                        out={"ok": evt.get("ok")},
+                        success=bool(int(evt.get("ok") or 0)),
+                        error=error,
+                    )
             elif ev == "failure_routed" and not error:
                 error = str(evt.get("reason") or "")
+            elif ev in {"failure_routed", "planner_compile_failed_route", "local_replan"}:
+                _append_log(
+                    component="failure_router",
+                    action=ev,
+                    inp={"task_id": evt.get("task_id"), "action": evt.get("action")},
+                    out={"reason": evt.get("reason"), "category": evt.get("category")},
+                    success=False,
+                    error=str(evt.get("reason") or ev),
+                )
             elif ev in {"retry_scheduled", "retry_exhausted"}:
                 retry_actions.append(dict(evt))
             elif ev == "failure_fallback":
@@ -3728,32 +3756,6 @@ class RuntimeEngine:
             self._task_run_recorder.append_step(cur, step)
         except Exception:
             pass
-                _append_log(
-                    component="worker",
-                    action="execute",
-                    inp={"task_id": evt.get("task_id"), "selected_expert": evt.get("selected_expert")},
-                    out={"ok": evt.get("ok"), "wait_user": evt.get("wait_user")},
-                    success=bool(int(evt.get("ok") or 0)),
-                    error=str(evt.get("error") or ""),
-                )
-                if str(evt.get("selected_expert") or "") == "codex":
-                    _append_log(
-                        component="codex_delegate",
-                        action="delegate_call",
-                        inp={"task_id": evt.get("task_id")},
-                        out={"ok": evt.get("ok")},
-                        success=bool(int(evt.get("ok") or 0)),
-                        error=str(evt.get("error") or ""),
-                    )
-            elif ev in {"failure_routed", "planner_compile_failed_route", "local_replan"}:
-                _append_log(
-                    component="failure_router",
-                    action=ev,
-                    inp={"task_id": evt.get("task_id"), "action": evt.get("action")},
-                    out={"reason": evt.get("reason"), "category": evt.get("category")},
-                    success=False,
-                    error=str(evt.get("reason") or ev),
-                )
 
     def _build_selfdrive_kernel_state(self, goal: str, duration_minutes: Optional[int]) -> KernelAgentState:
         normalized_goal = self._normalize_selfdrive_goal(goal) or "持续推进当前任务"
@@ -4215,6 +4217,9 @@ class RuntimeEngine:
             if active:
                 return self._selfdrive_status_text()
             return self._selfdrive_plan_text(goal=goal or str(user_text or "").strip())
+        router_gate = self._handle_bdllm_router_gate(user_text)
+        if router_gate is not None:
+            return router_gate
         pred = self._detect_nl_control_overlay_semantic(user_text)
         if not isinstance(pred, dict):
             return None
@@ -4258,6 +4263,40 @@ class RuntimeEngine:
             return None
         need = "、".join(missing)
         return f"我可以继续处理这个请求，但还缺少关键信息：{need}。"
+    def _handle_bdllm_router_gate(self, user_text: str) -> Optional[str]:
+        if not bool(self.bdllm_router_enabled):
+            return None
+        route = route_intent(
+            user_message=user_text,
+            user_profile={"full_user_permissions": bool(self.cfg.full_user_permissions)},
+            recent_context={"topic": str(self.state.get("topic") or "")},
+            persona_policy={"persona": str(self.persona_name or "")},
+            llm_client=GLMClient(),
+        )
+        self.mon["router_action"] = str(route.action)
+        self.mon["router_scope"] = str(route.scope)
+        self.mon["router_needs_confirm"] = int(bool(route.needs_confirm))
+        self.mon["router_confidence"] = float(route.confidence)
+        self.mon["router_reason"] = str(route.reason)
+
+        blocked_scope = str(route.scope) in {RouterScope.PROJECT_ONLY.value, RouterScope.VM.value, RouterScope.ISOLATED.value, RouterScope.LOBSTER.value}
+        if bool(route.needs_confirm) and (
+            blocked_scope
+            or str(route.action) in {RouterAction.EXECUTE_LIGHT.value, RouterAction.EXECUTE_HEAVY.value}
+        ):
+            pred = {
+                "intent": str(route.action),
+                "suggested_mode": "ask_user_confirm",
+                "guard_reason": f"confirm_required:{route.scope}",
+                "confidence": float(route.confidence),
+            }
+            self._set_guard_confirm_pending(source_text=user_text, pred=pred, channel="bdllm_router")
+            return "该请求涉及高风险执行或受限作用域。请先回复“确认执行”，否则我将继续澄清需求。"
+
+        if str(route.action) == RouterAction.ASK_CLARIFY.value:
+            return "我需要先澄清关键参数后再执行。请补充目标范围、输入与预期结果。"
+        return None
+
     def _detect_nl_control_overlay_semantic(self, text: str) -> Optional[Dict[str, Any]]:
         if not bool(self.nl_control_overlay_semantic_enabled):
             return None
