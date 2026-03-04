@@ -16,6 +16,7 @@ from .schemas import (
     TASK_KIND_CODE_TASK,
     TASK_KIND_PLAN_GOAL,
     AgentState,
+    FailureCategory,
     ExecutableSubgoal,
     Predicate,
     RouteAction,
@@ -121,6 +122,17 @@ class AgentKernel:
         if kind == "ask_user":
             return True
         return True
+
+
+    @staticmethod
+    def _ask_user_message_for_failure(category: FailureCategory) -> str:
+        if category == FailureCategory.PERMISSION_DENIED:
+            return "Permission denied. Please grant required workspace/tool permissions and retry."
+        if category == FailureCategory.ENVIRONMENT_MISSING:
+            return "Environment incomplete. Please install missing dependencies/files or provide runtime context."
+        if category == FailureCategory.GOAL_NOT_EXECUTABLE:
+            return "Goal is not executable yet. Please provide concrete acceptance criteria and boundaries."
+        return "Please provide missing input required by current subgoal."
 
     @staticmethod
     def _all_dependencies_done(task: Task, state: AgentState) -> bool:
@@ -595,7 +607,7 @@ class AgentKernel:
         elif decision.action == RouteAction.ASK_USER:
             task.status = "blocked"
             state.status = "waiting_user"
-            state.waiting_question = "Please provide missing input required by current subgoal."
+            state.waiting_question = self._ask_user_message_for_failure(decision.category)
         elif decision.action == RouteAction.REPAIR_AUTH:
             task.status = "blocked"
             state.status = "waiting_user"

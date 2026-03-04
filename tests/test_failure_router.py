@@ -52,6 +52,36 @@ class FailureRouterTests(unittest.TestCase):
         self.assertEqual(second.category.value, "repeated_same_error")
         self.assertEqual(second.action.value, "circuit_break")
 
+    def test_permission_denied_is_classified(self):
+        d = classify_failure(
+            subgoal_id="s1",
+            tool_name="code_task",
+            error_message="permission_denied:target_path_outside_workspace",
+            prior_fingerprints=[],
+        )
+        self.assertEqual(d.category.value, "permission_denied")
+        self.assertEqual(d.action.value, "ask_user")
+
+    def test_environment_missing_is_classified(self):
+        d = classify_failure(
+            subgoal_id="s1",
+            tool_name="code_task",
+            error_message="environment_missing:module not found",
+            prior_fingerprints=[],
+        )
+        self.assertEqual(d.category.value, "environment_missing")
+        self.assertEqual(d.action.value, "ask_user")
+
+    def test_goal_not_executable_is_classified(self):
+        d = classify_failure(
+            subgoal_id="s1",
+            tool_name="plan_goal",
+            error_message="goal_not_executable:missing acceptance criteria",
+            prior_fingerprints=[],
+        )
+        self.assertEqual(d.category.value, "goal_not_executable")
+        self.assertEqual(d.action.value, "ask_user")
+
 
 if __name__ == "__main__":
     unittest.main()
