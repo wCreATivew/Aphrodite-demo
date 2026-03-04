@@ -376,7 +376,9 @@ class AgentKernel:
         return True
 
     def run_step(self, state: AgentState, checkpoint_path: Optional[str] = None) -> AgentState:
+        state.trace.append(make_trace_event("planning_started", goal=str(state.goal or "")))
         self.planner.bootstrap(state)
+        state.trace.append(make_trace_event("planning_completed", task_count=len(list(state.tasks or []))))
         self._save(state, checkpoint_path)
 
         if state.status in {"done", "failed", "waiting_user"}:
@@ -432,6 +434,7 @@ class AgentKernel:
         state.trace.append(make_trace_event("task_selected", task_id=task.task_id, kind=task.kind))
 
         inv_start = time.time()
+        state.trace.append(make_trace_event("worker_execution_started", task_id=task.task_id, kind=task.kind))
         result = self.worker.execute(task)
         inv_end = time.time()
         tool_name = str(task.kind or "").strip().lower()
