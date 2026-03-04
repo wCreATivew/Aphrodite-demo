@@ -1,0 +1,14 @@
+﻿{
+    "backend":  "Aphrodite demo ver.A.py",
+    "frontend":  "前端v0.2202612604.py",
+    "backend_major":  0,
+    "backend_minor_int":  0,
+    "backend_minor":  0,
+    "backend_date":  0,
+    "backend_debug":  0,
+    "frontend_minor_int":  2,
+    "frontend_minor":  0.2,
+    "frontend_date":  2026126,
+    "frontend_debug":  4,
+    "updated_at":  "2026-02-27T17:44:09"
+}

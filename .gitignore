@@ -1,0 +1,62 @@
+# Python virtual env and cache
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Local temp/cache dirs
+tmpngw_s4w_/
+outputs/
+
+# Node deps
+node_modules/
+agent-homepage-v1/node_modules/
+
+# Local monitoring/runtime artifacts
+monitor/metrics.db
+monitor/metrics.db-shm
+monitor/metrics.db-wal
+monitor/ide_debug.log
+
+# Backup files
+*.bak
+
+# Other project leftovers / rollback files
+agent-homepage-v1/
+video_knowledge_agent/
+Aphrodite demo ver.A.py
+A0.32026205.01(暂停）.py
+前端v0.2202612604.py
+run_kernel_demo.py
+run_kernel_v15_demo.py
+run_kernel_v16_demo.py
+# Secrets
+.env
+.env.*
+!.env.example
+
+# IDE / local app config
+.vscode/
+.streamlit/
+
+# Local memory / vector DB artifacts
+memory.faiss
+memory.sqlite
+memory_ids.npy
+*.sqlite
+*.db
+*.npy
+
+# Local data (if generated/runtime data)
+data/
+# Runtime/generated artifacts (recommended to exclude from first commit)
+monitor/*.faiss
+monitor/screenshots/
+monitor/*.wav
+
+q_out.json
+report.json
+state.json
+
+rag_offline/eval_report*.json
+rag_offline/tune_report*.json

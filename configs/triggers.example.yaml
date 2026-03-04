@@ -1,0 +1,76 @@
+{
+  "triggers": [
+    {
+      "trigger_id": "set_reminder",
+      "name": "Set Reminder",
+      "description": "Create reminder tasks with date/time and reminder content.",
+      "aliases": [
+        "提醒",
+        "提醒我",
+        "remind",
+        "set reminder"
+      ],
+      "positive_examples": [
+        "明天下午3点提醒我开会",
+        "晚上8点提醒我吃药",
+        "后天9:30提醒我回电话",
+        "下周一7点提醒我跑步",
+        "remind me at 6pm to call mom",
+        "set a reminder for tomorrow 10am dentist",
+        "in 30 minutes remind me to stand up",
+        "please remind me next Tuesday to pay rent"
+      ],
+      "negative_examples": [
+        "提醒功能是怎么做的",
+        "你会提醒我吗",
+        "我在看提醒系统设计",
+        "推荐一下提醒App",
+        "what is a reminder app",
+        "event-driven reminder architecture",
+        "how to design reminder queue",
+        "explain reminder feature"
+      ],
+      "required_slots": [
+        {
+          "slot_name": "time",
+          "slot_type": "time",
+          "required": true,
+          "extraction_hints": [
+            "when",
+            "at 6pm"
+          ],
+          "validation_rules": {}
+        },
+        {
+          "slot_name": "content",
+          "slot_type": "string",
+          "required": true,
+          "extraction_hints": [
+            "what to remind"
+          ],
+          "validation_rules": {}
+        }
+      ],
+      "optional_slots": [
+        {
+          "slot_name": "date",
+          "slot_type": "date",
+          "required": false,
+          "extraction_hints": [
+            "tomorrow",
+            "next week"
+          ],
+          "validation_rules": {}
+        }
+      ],
+      "hard_constraints": [],
+      "priority": 9,
+      "enabled": true,
+      "tags": [
+        "task",
+        "time"
+      ],
+      "metadata": {}
+    }
+  ]
+}

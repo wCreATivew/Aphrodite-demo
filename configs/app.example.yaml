@@ -1,0 +1,31 @@
+{
+  "top_k": 20,
+  "rerank_top_k": 20,
+  "low_confidence_threshold": 0.42,
+  "no_trigger_threshold": 0.28,
+  "margin_threshold": 0.06,
+  "ask_clarification_margin": 0.03,
+  "min_consistency_score": 0.2,
+  "default_trigger_threshold": 0.55,
+  "per_trigger_threshold": {
+    "set_reminder": 0.48,
+    "send_message": 0.46,
+    "weather_query": 0.5,
+    "open_file": 0.48,
+    "web_search": 0.48,
+    "play_music": 0.5,
+    "set_alarm": 0.5,
+    "translate_text": 0.52,
+    "summarize_text": 0.52,
+    "write_email": 0.53,
+    "schedule_query": 0.5,
+    "smalltalk_chat": 0.58,
+    "code_debug": 0.5
+  },
+  "enable_adjudicator": false,
+  "log_level": "INFO",
+  "json_log": false,
+  "config_version": "cfg_default_v1",
+  "policy_version": "semantic_policy_v2",
+  "dataset_version": "eval_dataset_v1"
+}

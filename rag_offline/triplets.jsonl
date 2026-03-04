@@ -1,0 +1,3 @@
+{"query": "I feel anxious at work", "positive": "When user feels anxious, start with grounding and validation.", "negative": "Movie suggestions for weekends."}
+{"query": "Help me make a practical plan", "positive": "If user asks for practical planning, provide checklist style.", "negative": "Speak only in very long paragraphs."}
+{"query": "Help me make a practical plan", "positive": "User prefers concise responses and dislikes long lectures.", "negative": "Speak only in very long paragraphs."}

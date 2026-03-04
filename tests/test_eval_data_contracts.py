@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+TRIGGERS_PATH = ROOT / "data" / "triggers" / "default_triggers.yaml"
+EVAL_PATH = ROOT / "data" / "eval" / "eval_dataset.jsonl"
+REGRESSION_FILES = [
+    ROOT / "data" / "eval" / "regression_core.jsonl",
+    ROOT / "data" / "eval" / "regression_confusions.jsonl",
+    ROOT / "data" / "eval" / "regression_boundaries.jsonl",
+]
+ALLOWED_DECISIONS = {"trigger", "no_trigger", "ask_clarification"}
+
+
+def _load_triggers_yaml() -> list[dict[str, Any]]:
+    text = TRIGGERS_PATH.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    triggers: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for line in lines:
+        s = line.strip()
+        if s.startswith("- trigger_id:"):
+            if current is not None:
+                triggers.append(current)
+            current = {"trigger_id": s.split(":", 1)[1].strip()}
+            continue
+        if current is None:
+            continue
+        if s.startswith("name:"):
+            current["name"] = s.split(":", 1)[1].strip()
+        elif s.startswith("description:"):
+            current["description"] = s.split(":", 1)[1].strip()
+    if current is not None:
+        triggers.append(current)
+    return triggers
+
+
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for i, raw in enumerate(f, start=1):
+            line = str(raw or "").strip()
+            assert line, f"{path.name} row {i} is empty"
+            obj = json.loads(line)
+            assert isinstance(obj, dict), f"{path.name} row {i} must be json object"
+            rows.append(obj)
+    return rows
+
+
+def test_trigger_ids_unique() -> None:
+    triggers = _load_triggers_yaml()
+    ids = [str(t.get("trigger_id") or "").strip() for t in triggers]
+    assert all(ids), "all triggers must have trigger_id"
+    assert len(ids) == len(set(ids)), "trigger_id must be unique"
+
+
+def test_eval_and_regression_jsonl_parseable() -> None:
+    _load_jsonl(EVAL_PATH)
+    for p in REGRESSION_FILES:
+        _load_jsonl(p)
+
+
+def test_decision_labels_are_valid() -> None:
+    all_paths = [EVAL_PATH, *REGRESSION_FILES]
+    for path in all_paths:
+        rows = _load_jsonl(path)
+        for i, row in enumerate(rows, start=1):
+            decision = str(row.get("expected_decision") or "").strip()
+            assert decision in ALLOWED_DECISIONS, f"{path.name} row {i}: invalid decision={decision}"
+
+
+def test_regression_query_non_empty() -> None:
+    for path in REGRESSION_FILES:
+        rows = _load_jsonl(path)
+        for i, row in enumerate(rows, start=1):
+            query = str(row.get("query") or "").strip()
+            assert query, f"{path.name} row {i}: query cannot be empty"
+
+
+def test_expected_trigger_exists_when_present() -> None:
+    trigger_ids = {str(t.get("trigger_id") or "").strip() for t in _load_triggers_yaml()}
+    all_paths = [EVAL_PATH, *REGRESSION_FILES]
+    for path in all_paths:
+        rows = _load_jsonl(path)
+        for i, row in enumerate(rows, start=1):
+            expected_trigger = str(row.get("expected_trigger") or "").strip()
+            if expected_trigger:
+                assert expected_trigger in trigger_ids, (
+                    f"{path.name} row {i}: expected_trigger={expected_trigger} not in registry"
+                )
