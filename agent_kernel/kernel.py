@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .circuit_breaker import CircuitBreaker
 from .compile_check import CompileIssue, plan_compile_check
-from .failure_router import classify_failure
+from .failure_router import classify_failure, is_retryable_failure
 from .judge import SimpleJudge
 from .local_replan import action_fingerprint, apply_local_replan, compute_descendants
 from .persistence import save_state_json
@@ -95,6 +95,19 @@ class AgentKernel:
         if "goal" in payload:
             summary += f"; goal={str(payload.get('goal') or '')[:80]}"
         return summary[:max_len]
+
+    @staticmethod
+    def _retry_delay_seconds(policy: Optional[RetryPolicy], attempt_index: int) -> float:
+        if policy is None:
+            return 0.0
+        base_ms = max(0, int(getattr(policy, "base_delay_ms", 0) or 0))
+        backoff = str(getattr(policy, "backoff", "") or "").strip().lower()
+        if base_ms <= 0:
+            return 0.0
+        if backoff == "exponential":
+            factor = max(1, int(attempt_index))
+            return float(base_ms * (2 ** (factor - 1))) / 1000.0
+        return float(base_ms) / 1000.0
 
     @staticmethod
     def _error_signature(error: str) -> str:
@@ -592,28 +605,80 @@ class AgentKernel:
             return state
 
         # Transition based on failure router action.
-        if decision.action == RouteAction.RETRY:
+        if is_retryable_failure(decision):
             policy = ExecutableSubgoal.from_task(task).retry_policy
+            max_attempts = max(1, int(getattr(policy, "max_attempts", 1) or 1)) if policy else 1
             next_attempt = int(task.retries) + 1
-            if policy and next_attempt < int(policy.max_attempts):
+            if policy and next_attempt < max_attempts:
+                delay_sec = self._retry_delay_seconds(policy, next_attempt)
+                state.trace.append(
+                    make_trace_event(
+                        "retry_scheduled",
+                        task_id=task.task_id,
+                        attempt=next_attempt,
+                        max_attempts=max_attempts,
+                        delay_ms=int(max(0.0, delay_sec) * 1000.0),
+                        reason=decision.reason,
+                        category=decision.category.value,
+                    )
+                )
+                if delay_sec > 0:
+                    time.sleep(delay_sec)
                 task.retries = next_attempt
                 task.status = "failed_retryable"
                 # Immediately make it runnable on next loop.
                 task.status = "ready"
                 state.status = "running"
             else:
+                state.trace.append(
+                    make_trace_event(
+                        "retry_exhausted",
+                        task_id=task.task_id,
+                        attempts=next_attempt,
+                        max_attempts=max_attempts,
+                        reason=decision.reason,
+                        category=decision.category.value,
+                    )
+                )
                 task.status = "failed"
                 state.status = "failed"
         elif decision.action == RouteAction.ASK_USER:
+            state.trace.append(
+                make_trace_event(
+                    "failure_fallback",
+                    task_id=task.task_id,
+                    fallback_action=decision.action.value,
+                    reason=decision.reason,
+                    category=decision.category.value,
+                )
+            )
             task.status = "blocked"
             state.status = "waiting_user"
             state.waiting_question = self._ask_user_message_for_failure(decision.category)
         elif decision.action == RouteAction.REPAIR_AUTH:
+            state.trace.append(
+                make_trace_event(
+                    "failure_fallback",
+                    task_id=task.task_id,
+                    fallback_action=decision.action.value,
+                    reason=decision.reason,
+                    category=decision.category.value,
+                )
+            )
             task.status = "blocked"
             state.status = "waiting_user"
             state.waiting_question = "Authentication required. Please provide/repair credentials."
         elif decision.action in {RouteAction.LOCAL_REPLAN, RouteAction.LOCAL_REPLAN_WITH_CONSTRAINTS}:
             task.status = "failed_retryable"
+            state.trace.append(
+                make_trace_event(
+                    "failure_fallback",
+                    task_id=task.task_id,
+                    fallback_action=decision.action.value,
+                    reason=decision.reason,
+                    category=decision.category.value,
+                )
+            )
             ok = self._handle_local_replan(
                 state,
                 task,

@@ -3593,6 +3593,8 @@ class RuntimeEngine:
         if cur is None:
             return
         tool_calls: List[Dict[str, Any]] = []
+        retry_actions: List[Dict[str, Any]] = []
+        fallback_actions: List[Dict[str, Any]] = []
         output: Dict[str, Any] = {}
         error = ""
         status = "ok"
@@ -3626,8 +3628,16 @@ class RuntimeEngine:
                 error = str(evt.get("error") or "")
             elif ev == "failure_routed" and not error:
                 error = str(evt.get("reason") or "")
+            elif ev in {"retry_scheduled", "retry_exhausted"}:
+                retry_actions.append(dict(evt))
+            elif ev == "failure_fallback":
+                fallback_actions.append(dict(evt))
         if error:
             status = "error"
+        if retry_actions:
+            output["retry_actions"] = retry_actions
+        if fallback_actions:
+            output["fallback_actions"] = fallback_actions
         step = TaskRunStep(
             step_id=f"s{len(cur.steps)+1:04d}",
             ts_start=float(ts_start),
@@ -3635,6 +3645,7 @@ class RuntimeEngine:
             duration_ms=int(max(0.0, (float(ts_end)-float(ts_start))) * 1000.0),
             input_payload=input_payload,
             tool_calls=tool_calls,
+            trace_events=[dict(x) for x in list(trace_events or []) if isinstance(x, dict)],
             output=output,
             error=error,
             status=status,
