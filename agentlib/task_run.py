@@ -9,11 +9,16 @@ from typing import Any, Dict, List, Optional
 
 
 @dataclass
-class TaskRunStep:
+class StepLog:
     step_id: str
     ts_start: float
     ts_end: float
     duration_ms: int
+    component: str = ""
+    action: str = ""
+    input_preview: str = ""
+    output_preview: str = ""
+    success: bool = True
     input_payload: Dict[str, Any] = field(default_factory=dict)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     output: Dict[str, Any] = field(default_factory=dict)
@@ -21,13 +26,18 @@ class TaskRunStep:
     status: str = "ok"
 
 
+# Backward-compatible alias.
+TaskRunStep = StepLog
+
+
 @dataclass
 class TaskRun:
     run_id: str
     goal: str
     plan: List[Dict[str, Any]] = field(default_factory=list)
-    steps: List[TaskRunStep] = field(default_factory=list)
+    steps: List[StepLog] = field(default_factory=list)
     status: str = "running"
+    summary: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -56,15 +66,21 @@ class TaskRunRecorder:
         with open(self._meta_path(run.run_id), "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    def append_step(self, run: TaskRun, step: TaskRunStep) -> None:
+    def append_step(self, run: TaskRun, step: StepLog) -> None:
         run.steps.append(step)
         run.updated_at = float(time.time())
         with open(self._steps_path(run.run_id), "a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(step), ensure_ascii=False) + "\n")
         self.save_run(run)
 
-    def finalize(self, run: TaskRun, *, status: str) -> None:
+    # Explicit StepLog API while keeping append_step for compatibility.
+    def append_step_log(self, run: TaskRun, step: StepLog) -> None:
+        self.append_step(run, step)
+
+    def finalize(self, run: TaskRun, *, status: str, summary: str = "") -> None:
         run.status = str(status or run.status or "done")
+        if str(summary or "").strip():
+            run.summary = str(summary).strip()
         run.updated_at = float(time.time())
         self.save_run(run)
 
@@ -86,7 +102,7 @@ def load_task_runs(base_dir: str = os.path.join("outputs", "task_runs")) -> List
         if not isinstance(obj, dict):
             continue
         steps_raw = list(obj.get("steps") or [])
-        steps = [TaskRunStep(**dict(x)) for x in steps_raw if isinstance(x, dict)]
+        steps = [StepLog(**dict(x)) for x in steps_raw if isinstance(x, dict)]
         out.append(
             TaskRun(
                 run_id=str(obj.get("run_id") or ""),
@@ -94,6 +110,7 @@ def load_task_runs(base_dir: str = os.path.join("outputs", "task_runs")) -> List
                 plan=list(obj.get("plan") or []),
                 steps=steps,
                 status=str(obj.get("status") or "unknown"),
+                summary=str(obj.get("summary") or ""),
                 created_at=float(obj.get("created_at") or 0.0),
                 updated_at=float(obj.get("updated_at") or 0.0),
             )
@@ -101,9 +118,9 @@ def load_task_runs(base_dir: str = os.path.join("outputs", "task_runs")) -> List
     return out
 
 
-def load_task_run_steps(run_id: str, base_dir: str = os.path.join("outputs", "task_runs")) -> List[TaskRunStep]:
+def load_task_run_steps(run_id: str, base_dir: str = os.path.join("outputs", "task_runs")) -> List[StepLog]:
     p = os.path.join(str(base_dir or os.path.join("outputs", "task_runs")), f"{run_id}.steps.jsonl")
-    out: List[TaskRunStep] = []
+    out: List[StepLog] = []
     if not os.path.isfile(p):
         return out
     with open(p, "r", encoding="utf-8") as f:
@@ -117,7 +134,7 @@ def load_task_run_steps(run_id: str, base_dir: str = os.path.join("outputs", "ta
                 continue
             if isinstance(obj, dict):
                 try:
-                    out.append(TaskRunStep(**obj))
+                    out.append(StepLog(**obj))
                 except Exception:
                     pass
     return out
