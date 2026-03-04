@@ -59,28 +59,40 @@ def classify_failure(
                 fingerprint=fp,
             )
 
-    if _contains_any(text, ["missing input", "required", "not provided", "missing required", "keyerror"]):
+    if _contains_any(text, MISSING_INPUT_KEYWORDS):
         return _decision(FailureCategory.MISSING_INPUT, RouteAction.ASK_USER, "missing runtime input", fp)
-    if _contains_any(text, ["401", "403", "unauthorized", "forbidden", "auth", "api key", "token", "credential"]):
+    if _contains_any(text, AUTH_ERROR_KEYWORDS):
         return _decision(FailureCategory.AUTH_ERROR, RouteAction.REPAIR_AUTH, "authentication/authorization failure", fp)
-    if _contains_any(text, ["permission denied", "permission_denied", "operation not permitted", "eacces", "readonly", "write-protected"]):
+    if _contains_any(text, PERMISSION_DENIED_KEYWORDS):
         return _decision(FailureCategory.PERMISSION_DENIED, RouteAction.ASK_USER, "permission denied", fp)
-    if _contains_any(text, ["module not found", "command not found", "not installed", "missing env", "environment_missing", "file not found", "no such file"]):
+    if _contains_any(text, ENVIRONMENT_MISSING_KEYWORDS):
         return _decision(FailureCategory.ENVIRONMENT_MISSING, RouteAction.ASK_USER, "environment incomplete", fp)
-    if _contains_any(text, ["timeout", "timed out", "temporar", "429", "rate limit", "connection reset", "unavailable"]):
+    if is_retryable_error_message(text):
         return _decision(FailureCategory.TRANSIENT_TOOL_ERROR, RouteAction.RETRY, "transient tool failure", fp)
-    if _contains_any(text, ["goal_not_executable", "objective not executable", "cannot execute goal", "goal is not actionable", "missing acceptance criteria", "ambiguous goal"]):
+    if _contains_any(text, GOAL_NOT_EXECUTABLE_KEYWORDS):
         return _decision(FailureCategory.GOAL_NOT_EXECUTABLE, RouteAction.ASK_USER, "goal not executable", fp)
-    if _contains_any(text, ["not implemented", "unsupported", "capability", "cannot do", "model limit"]):
+    if _contains_any(text, CAPABILITY_GAP_KEYWORDS):
         return _decision(
             FailureCategory.CAPABILITY_GAP,
             RouteAction.LOCAL_REPLAN_WITH_CONSTRAINTS,
             "capability gap",
             fp,
         )
-    if _contains_any(text, ["assertion", "criteria failed", "conflict", "dependency", "logic"]):
+    if _contains_any(text, LOGIC_CONFLICT_KEYWORDS):
         return _decision(FailureCategory.LOGIC_CONFLICT, RouteAction.LOCAL_REPLAN, "logic conflict", fp)
     return _decision(FailureCategory.UNKNOWN, RouteAction.LOCAL_REPLAN, "unknown failure", fp)
+
+
+def is_retryable_error_message(error_message: str) -> bool:
+    return _contains_any(_normalize_text(error_message), RETRYABLE_ERROR_KEYWORDS)
+
+
+def is_retryable_category(category: FailureCategory) -> bool:
+    return category == FailureCategory.TRANSIENT_TOOL_ERROR
+
+
+def is_retryable_failure(decision: FailureDecision) -> bool:
+    return bool(decision.action == RouteAction.RETRY and is_retryable_category(decision.category))
 
 
 def _decision(category: FailureCategory, action: RouteAction, reason: str, fingerprint: str) -> FailureDecision:
@@ -104,3 +116,12 @@ def _guess_error_type(text: str) -> str:
         return "error"
     return "unknown"
 
+
+MISSING_INPUT_KEYWORDS = ["missing input", "required", "not provided", "missing required", "keyerror"]
+AUTH_ERROR_KEYWORDS = ["401", "403", "unauthorized", "forbidden", "auth", "api key", "token", "credential"]
+PERMISSION_DENIED_KEYWORDS = ["permission denied", "permission_denied", "operation not permitted", "eacces", "readonly", "write-protected"]
+ENVIRONMENT_MISSING_KEYWORDS = ["module not found", "command not found", "not installed", "missing env", "environment_missing", "file not found", "no such file"]
+RETRYABLE_ERROR_KEYWORDS = ["timeout", "timed out", "temporar", "429", "rate limit", "connection reset", "network", "connection refused", "unavailable"]
+GOAL_NOT_EXECUTABLE_KEYWORDS = ["goal_not_executable", "objective not executable", "cannot execute goal", "goal is not actionable", "missing acceptance criteria", "ambiguous goal"]
+CAPABILITY_GAP_KEYWORDS = ["not implemented", "unsupported", "capability", "cannot do", "model limit"]
+LOGIC_CONFLICT_KEYWORDS = ["assertion", "criteria failed", "conflict", "dependency", "logic"]
