@@ -116,15 +116,3 @@
 - `confirmed` 回调路径改为“编译一次 DSL、执行一次控制命令”，避免重复 `intent` 判断和重复启动分支。
 - 保留原有功能语义（权限确认、目标可执行性检查、budget 透传），但减少了冗余路径调用，降低主链路分支复杂度。
 
-
-## 10. 任务执行与回放（TaskRun）
-
-- 新增 `agentlib/task_run.py`：
-  - `TaskRun`：`run_id/goal/plan/steps/status/created_at/updated_at`
-  - `TaskRunStep`：每步记录 `input_payload/tool_calls/output/duration_ms/error/status`
-  - `TaskRunRecorder`：`start_run/append_step/finalize`，默认落盘到 `outputs/task_runs`
-- `RuntimeEngine` 已接入：
-  - selfdrive 启动时创建 run
-  - 每次 kernel `run_step` 后按新增 trace 记录 step
-  - stop/pause/done/failed/waiting_user 时更新 run status
-- `streamlit_homepage.py` 已加入「TaskRun 回放 / 审计」页：可选 run、查看 plan、逐步回放工具调用与错误。
