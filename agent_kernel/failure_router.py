@@ -63,8 +63,14 @@ def classify_failure(
         return _decision(FailureCategory.MISSING_INPUT, RouteAction.ASK_USER, "missing runtime input", fp)
     if _contains_any(text, ["401", "403", "unauthorized", "forbidden", "auth", "api key", "token", "credential"]):
         return _decision(FailureCategory.AUTH_ERROR, RouteAction.REPAIR_AUTH, "authentication/authorization failure", fp)
+    if _contains_any(text, ["permission denied", "permission_denied", "operation not permitted", "eacces", "readonly", "write-protected"]):
+        return _decision(FailureCategory.PERMISSION_DENIED, RouteAction.ASK_USER, "permission denied", fp)
+    if _contains_any(text, ["module not found", "command not found", "not installed", "missing env", "environment_missing", "file not found", "no such file"]):
+        return _decision(FailureCategory.ENVIRONMENT_MISSING, RouteAction.ASK_USER, "environment incomplete", fp)
     if _contains_any(text, ["timeout", "timed out", "temporar", "429", "rate limit", "connection reset", "unavailable"]):
         return _decision(FailureCategory.TRANSIENT_TOOL_ERROR, RouteAction.RETRY, "transient tool failure", fp)
+    if _contains_any(text, ["goal_not_executable", "objective not executable", "cannot execute goal", "goal is not actionable", "missing acceptance criteria", "ambiguous goal"]):
+        return _decision(FailureCategory.GOAL_NOT_EXECUTABLE, RouteAction.ASK_USER, "goal not executable", fp)
     if _contains_any(text, ["not implemented", "unsupported", "capability", "cannot do", "model limit"]):
         return _decision(
             FailureCategory.CAPABILITY_GAP,
