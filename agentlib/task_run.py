@@ -16,6 +16,7 @@ class TaskRunStep:
     duration_ms: int
     input_payload: Dict[str, Any] = field(default_factory=dict)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    trace_events: List[Dict[str, Any]] = field(default_factory=list)
     output: Dict[str, Any] = field(default_factory=dict)
     error: str = ""
     status: str = "ok"
