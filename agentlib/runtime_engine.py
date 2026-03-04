@@ -3579,12 +3579,54 @@ class RuntimeEngine:
         except Exception:
             self._task_run_current = None
 
+    @staticmethod
+    def _task_run_redact_text(value: str) -> str:
+        txt = str(value or "")
+        patterns = [
+            r"(?i)(api[_-]?key\s*[=:]\s*)([^\s,;]+)",
+            r"(?i)(token\s*[=:]\s*)([^\s,;]+)",
+            r"(?i)(secret\s*[=:]\s*)([^\s,;]+)",
+            r"(?i)(password\s*[=:]\s*)([^\s,;]+)",
+            r"(?i)(bearer\s+)([A-Za-z0-9._-]+)",
+        ]
+        out = txt
+        for ptn in patterns:
+            out = re.sub(ptn, r"\1[REDACTED]", out)
+        return out
+
+    def _task_run_preview(self, value: Any, max_len: int = 260) -> str:
+        try:
+            if isinstance(value, str):
+                raw = value
+            else:
+                raw = json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            raw = str(value)
+        clean = self._task_run_redact_text(raw)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        if len(clean) <= int(max_len):
+            return clean
+        return clean[: max(0, int(max_len) - 3)] + "..."
+
     def _task_run_finalize(self, status: str) -> None:
         cur = self._task_run_current
         if cur is None:
             return
+        ks = self._selfdrive_kernel_state
+        summary_parts: List[str] = []
+        if ks is not None:
+            total = len(list(getattr(ks, "tasks", []) or []))
+            done = 0
+            for t in list(getattr(ks, "tasks", []) or []):
+                if str(getattr(t, "status", "") or "").lower() in {"done", "skipped"}:
+                    done += 1
+            summary_parts.append(f"tasks_done={done}/{total}")
+            last_error = str(getattr(ks, "last_error", "") or "")
+            if last_error:
+                summary_parts.append(f"last_error={self._task_run_preview(last_error, max_len=120)}")
+        summary = "; ".join(summary_parts)
         try:
-            self._task_run_recorder.finalize(cur, status=str(status or "done"))
+            self._task_run_recorder.finalize(cur, status=str(status or "done"), summary=summary)
         except Exception:
             pass
 
@@ -3607,17 +3649,49 @@ class RuntimeEngine:
                 if str(getattr(t, "task_id", "") or "") == active_id:
                     input_payload = dict(getattr(t, "input_payload", {}) or {})
                     break
+
+        def _append_log(*, component: str, action: str, inp: Any, out: Any, success: bool, error: str = "") -> None:
+            step = TaskRunStep(
+                step_id=f"s{len(cur.steps)+1:04d}",
+                ts_start=float(ts_start),
+                ts_end=float(ts_end),
+                duration_ms=int(max(0.0, (float(ts_end)-float(ts_start))) * 1000.0),
+                component=str(component or ""),
+                action=str(action or ""),
+                input_preview=self._task_run_preview(inp),
+                output_preview=self._task_run_preview(out),
+                success=bool(success),
+                input_payload=input_payload,
+                output=out if isinstance(out, dict) else {"preview": self._task_run_preview(out)},
+                error=self._task_run_preview(error, max_len=200) if error else "",
+                status="ok" if success else "error",
+            )
+            try:
+                self._task_run_recorder.append_step_log(cur, step)
+            except Exception:
+                pass
+
         for evt in list(trace_events or []):
             if not isinstance(evt, dict):
                 continue
             ev = str(evt.get("event") or "")
-            if ev == "tool_invocation_record":
-                tool_calls.append({
-                    "tool_name": str(evt.get("tool_name") or ""),
-                    "duration_ms": int(evt.get("duration_ms") or 0),
-                    "error_signature": str(evt.get("error_signature") or ""),
-                    "input_summary": str(evt.get("input_summary") or ""),
-                })
+            if ev == "task_selected":
+                _append_log(
+                    component="planner",
+                    action="task_selected",
+                    inp={"task_id": evt.get("task_id"), "kind": evt.get("kind")},
+                    out="selected",
+                    success=True,
+                )
+            elif ev == "tool_invocation_record":
+                _append_log(
+                    component="tool_router",
+                    action="tool_execute",
+                    inp={"tool_name": evt.get("tool_name"), "input_summary": evt.get("input_summary")},
+                    out={"duration_ms": evt.get("duration_ms"), "error_signature": evt.get("error_signature")},
+                    success=not bool(evt.get("error_signature")),
+                    error=str(evt.get("error_signature") or ""),
+                )
             elif ev == "worker_result":
                 output = {
                     "task_id": str(evt.get("task_id") or ""),
@@ -3654,6 +3728,32 @@ class RuntimeEngine:
             self._task_run_recorder.append_step(cur, step)
         except Exception:
             pass
+                _append_log(
+                    component="worker",
+                    action="execute",
+                    inp={"task_id": evt.get("task_id"), "selected_expert": evt.get("selected_expert")},
+                    out={"ok": evt.get("ok"), "wait_user": evt.get("wait_user")},
+                    success=bool(int(evt.get("ok") or 0)),
+                    error=str(evt.get("error") or ""),
+                )
+                if str(evt.get("selected_expert") or "") == "codex":
+                    _append_log(
+                        component="codex_delegate",
+                        action="delegate_call",
+                        inp={"task_id": evt.get("task_id")},
+                        out={"ok": evt.get("ok")},
+                        success=bool(int(evt.get("ok") or 0)),
+                        error=str(evt.get("error") or ""),
+                    )
+            elif ev in {"failure_routed", "planner_compile_failed_route", "local_replan"}:
+                _append_log(
+                    component="failure_router",
+                    action=ev,
+                    inp={"task_id": evt.get("task_id"), "action": evt.get("action")},
+                    out={"reason": evt.get("reason"), "category": evt.get("category")},
+                    success=False,
+                    error=str(evt.get("reason") or ev),
+                )
 
     def _build_selfdrive_kernel_state(self, goal: str, duration_minutes: Optional[int]) -> KernelAgentState:
         normalized_goal = self._normalize_selfdrive_goal(goal) or "持续推进当前任务"
