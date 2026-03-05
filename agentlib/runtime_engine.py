@@ -59,8 +59,9 @@ from .persona_router import detect_persona_from_text
 from .prompt_manager import PromptManager, PromptTuneResult
 from .patch_executor import PatchExecutionTransaction
 from .runtime_state import RuntimeConfig, apply_idle_nudge, load_state, mark_user_turn, save_state, update_topic
+from .runtime_immediate_protocol import ImmediateReplyProtocol
 from .screen_capture import capture_screen_to_file
-from .semantic_intent_lane import SemanticIntentLane, list_semantic_intent_modules
+from .semantic_intent_lane import SemanticIntentLane
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
@@ -215,6 +216,7 @@ class RuntimeEngine:
             semantic_debug_autofix_enabled=self.semantic_debug_autofix_enabled,
             required_runtime_triggers=REQUIRED_RUNTIME_TRIGGERS,
         )
+        self.immediate_protocol = ImmediateReplyProtocol()
         self.nl_control_overlay_min_margin = self._env_float("NL_CONTROL_OVERLAY_MIN_MARGIN", 0.12)
         self.debug_local_model_min_confidence = self._env_float("DEBUG_LOCAL_MODEL_MIN_CONFIDENCE", 0.68)
         self.debug_state_window_sec = self._env_float("DEBUG_STATE_WINDOW_SEC", 600.0)
@@ -957,26 +959,6 @@ class RuntimeEngine:
                 return True
         return False
 
-    def _semantic_infer(self, text: str) -> Optional[Dict[str, Any]]:
-        payload = self.semantic_intent_lane.infer(text, self.mon)
-        self.semantic_trigger_engine = self.semantic_intent_lane.semantic_trigger_engine
-        self.semantic_trigger_last = dict(self.semantic_intent_lane.semantic_trigger_last or {})
-        return payload
-
-    def _list_semantic_intent_modules(self) -> List[Dict[str, str]]:
-        return list_semantic_intent_modules()
-
-    def _semantic_required_slots_for_trigger(self, trigger_id: str) -> List[str]:
-        return self.semantic_intent_lane.semantic_required_slots_for_trigger(trigger_id)
-
-    @staticmethod
-    def _semantic_suggested_mode(decision: str, intent: str, missing_slots: List[str]) -> str:
-        return SemanticIntentLane.semantic_suggested_mode(decision, intent, missing_slots)
-
-    @staticmethod
-    def _semantic_risk_level(suggested_mode: str, confidence: float, missing_slots: List[str]) -> str:
-        return SemanticIntentLane.semantic_risk_level(suggested_mode, confidence, missing_slots)
-
     def _semantic_guard_decision(
         self,
         *,
@@ -1628,6 +1610,27 @@ class RuntimeEngine:
             self._update_reply_length_preferences(user_text=user_text, is_idle=is_idle)
 
             if not is_idle:
+                route_packet = self.immediate_protocol.send(
+                    user_text=user_text,
+                    msg_id=msg_id,
+                    router=self.semantic_intent_lane.router,
+                    state_machine=self.semantic_intent_lane.state_machine,
+                    emit_reply=self._emit_reply,
+                    mon=self.mon,
+                ).to_dict()
+                route_action = str(route_packet.get("action") or "CHAT").upper()
+                self.history.append({"role": "user", "content": user_text})
+                self.history.append({"role": "assistant", "content": str(route_packet.get("immediate") or "")})
+                max_msgs = max(2, int(self.cfg.max_history_turns) * 2)
+                if len(self.history) > max_msgs:
+                    self.history = self.history[-max_msgs:]
+
+                if route_action in {"CHAT", "ASK_CLARIFY"}:
+                    self._reply_turn_max_sentences = None
+                    self._reply_turn_max_chars = None
+                    save_state(self.cfg.state_path, self.state)
+                    continue
+
                 direct_debug = None
                 if self._should_route_debug_command(user_text):
                     direct_debug = self._handle_debug_command(user_text)
@@ -1638,7 +1641,6 @@ class RuntimeEngine:
                             self._log_activity(tag="debug", text=text_dbg, echo=bool(self.debug_frontend_chat_enabled))
                     except Exception:
                         pass
-                    self.history.append({"role": "user", "content": user_text})
                     self.history.append({"role": "assistant", "content": str(direct_debug)})
                     max_msgs = max(2, int(self.cfg.max_history_turns) * 2)
                     if len(self.history) > max_msgs:
@@ -1651,7 +1653,6 @@ class RuntimeEngine:
 
                 direct_video = self._handle_video_summary_command(user_text)
                 if direct_video:
-                    self.history.append({"role": "user", "content": user_text})
                     self.history.append({"role": "assistant", "content": str(direct_video)})
                     max_msgs = max(2, int(self.cfg.max_history_turns) * 2)
                     if len(self.history) > max_msgs:
@@ -1664,7 +1665,6 @@ class RuntimeEngine:
 
                 direct_control = self._handle_natural_language_control(user_text)
                 if direct_control:
-                    self.history.append({"role": "user", "content": user_text})
                     self.history.append({"role": "assistant", "content": str(direct_control)})
                     max_msgs = max(2, int(self.cfg.max_history_turns) * 2)
                     if len(self.history) > max_msgs:
@@ -1984,7 +1984,9 @@ class RuntimeEngine:
                 "/selfdrive resume | /selfdrive stop"
             )
 
-        pred = self._semantic_infer(user_text)
+        pred = self.semantic_intent_lane.infer(user_text, self.mon)
+        self.semantic_trigger_engine = self.semantic_intent_lane.semantic_trigger_engine
+        self.semantic_trigger_last = dict(self.semantic_intent_lane.semantic_trigger_last or {})
         missing_required = str(self.mon.get("semantic_trigger_required_missing") or "")
         direct_autofix_intent = self._looks_like_direct_autofix_intent(user_text)
         if direct_autofix_intent:
@@ -2130,7 +2132,9 @@ class RuntimeEngine:
             return None
 
         direct_hit = self._looks_like_video_summary_intent(text)
-        pred = self._semantic_infer(text)
+        pred = self.semantic_intent_lane.infer(text, self.mon)
+        self.semantic_trigger_engine = self.semantic_intent_lane.semantic_trigger_engine
+        self.semantic_trigger_last = dict(self.semantic_intent_lane.semantic_trigger_last or {})
         semantic_hit = False
         if isinstance(pred, dict):
             trigger_id = str(pred.get("selected_trigger") or pred.get("intent") or "").strip().lower()
@@ -3834,6 +3838,16 @@ class RuntimeEngine:
         return f"[selfdrive] blocked_by_plan_gate; command={command}; reason={codes or 'compile_error'}"
 
     def _execute_selfdrive_control_dsl(self, payload: Dict[str, Any], source_text: str) -> Optional[str]:
+        exec_ts = float(time.time())
+        self.mon.setdefault("first_execute_event_ts", 0.0)
+        if float(self.mon.get("first_execute_event_ts") or 0.0) <= 0.0:
+            self.mon["first_execute_event_ts"] = exec_ts
+        if int(self.mon.get("immediate_reply_sent", 0) or 0) != 1:
+            self.mon["immediate_reply_order_violation"] = int(self.mon.get("immediate_reply_order_violation", 0) or 0) + 1
+        else:
+            sent_ts = float(self.mon.get("sent_at_timestamp") or self.mon.get("immediate_reply_sent_at_timestamp") or 0.0)
+            if sent_ts > 0 and exec_ts < sent_ts:
+                self.mon["immediate_reply_order_violation"] = int(self.mon.get("immediate_reply_order_violation", 0) or 0) + 1
         cmd = str(payload.get("command") or "").strip().upper()
         args = payload.get("args") or {}
         if not isinstance(args, dict):
@@ -3982,7 +3996,59 @@ class RuntimeEngine:
             if active:
                 return self._selfdrive_status_text()
             return self._selfdrive_plan_text(goal=goal or str(user_text or "").strip())
-        pred = self._detect_nl_control_overlay_semantic(user_text)
+        if not bool(self.nl_control_overlay_semantic_enabled):
+            return None
+        pred = self.semantic_intent_lane.infer(user_text, self.mon)
+        self.semantic_trigger_engine = self.semantic_intent_lane.semantic_trigger_engine
+        self.semantic_trigger_last = dict(self.semantic_intent_lane.semantic_trigger_last or {})
+        if not isinstance(pred, dict):
+            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
+            return None
+
+        suggested_mode = str(pred.get("suggested_mode") or pred.get("suuggested_mode") or "").strip().lower()
+        if suggested_mode in {"ask_user_confirm", "shadow_plan_only"}:
+            self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
+            self.mon["nl_overlay_last_target"] = str(pred.get("intent") or pred.get("selected_trigger") or "")
+            self.mon["nl_overlay_last_action"] = suggested_mode
+            self.mon["nl_overlay_last_reason"] = str(pred.get("guard_reason") or "")
+            self.mon["nl_overlay_last_confidence"] = float(pred.get("confidence") or 0.0)
+        else:
+            decision = str(pred.get("decision") or "")
+            trigger_id = str(pred.get("selected_trigger") or pred.get("intent") or "")
+            confidence = float(pred.get("confidence") or 0.0)
+            margin = float(pred.get("margin") or 0.0)
+            execution_allowed = bool(pred.get("execution_allowed") or False)
+            if not decision:
+                if suggested_mode == "ask_clarify":
+                    decision = "ask_clarification"
+                elif suggested_mode in {"debug", "selfdrive"} and trigger_id:
+                    decision = "trigger"
+                else:
+                    decision = "no_trigger"
+
+            if decision != "trigger" or not trigger_id:
+                if not ((decision == "ask_clarification" or suggested_mode == "ask_clarify") and trigger_id):
+                    self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
+                    return None
+                self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
+                self.mon["nl_overlay_last_target"] = trigger_id
+                self.mon["nl_overlay_last_action"] = "ask_clarification"
+                self.mon["nl_overlay_last_reason"] = ",".join(pred.get("missing_slots") or [])
+                self.mon["nl_overlay_last_confidence"] = confidence
+            else:
+                if not execution_allowed:
+                    self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
+                    return None
+                min_conf = float(self.nl_control_overlay_min_confidence)
+                min_margin = float(self.nl_control_overlay_min_margin)
+                if confidence < min_conf or margin < min_margin:
+                    self.mon["nl_overlay_ambiguous"] = int(self.mon.get("nl_overlay_ambiguous", 0) or 0) + 1
+                    return None
+                self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
+                self.mon["nl_overlay_last_target"] = trigger_id
+                self.mon["nl_overlay_last_action"] = "trigger"
+                self.mon["nl_overlay_last_reason"] = "semantic_overlay"
+                self.mon["nl_overlay_last_confidence"] = confidence
         if not isinstance(pred, dict):
             return None
 
@@ -4025,64 +4091,6 @@ class RuntimeEngine:
             return None
         need = "、".join(missing)
         return f"我可以继续处理这个请求，但还缺少关键信息：{need}。"
-    def _detect_nl_control_overlay_semantic(self, text: str) -> Optional[Dict[str, Any]]:
-        if not bool(self.nl_control_overlay_semantic_enabled):
-            return None
-        pred = self._semantic_infer(text)
-        if not isinstance(pred, dict):
-            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
-            return ""
-
-        suggested_mode = str(pred.get("suggested_mode") or pred.get("suuggested_mode") or "").strip().lower()
-        if suggested_mode in {"ask_user_confirm", "shadow_plan_only"}:
-            self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
-            self.mon["nl_overlay_last_target"] = str(pred.get("intent") or pred.get("selected_trigger") or "")
-            self.mon["nl_overlay_last_action"] = suggested_mode
-            self.mon["nl_overlay_last_reason"] = str(pred.get("guard_reason") or "")
-            self.mon["nl_overlay_last_confidence"] = float(pred.get("confidence") or 0.0)
-            return pred
-
-        decision = str(pred.get("decision") or "")
-        trigger_id = str(pred.get("selected_trigger") or pred.get("intent") or "")
-        confidence = float(pred.get("confidence") or 0.0)
-        margin = float(pred.get("margin") or 0.0)
-        execution_allowed = bool(pred.get("execution_allowed") or False)
-        if not decision:
-            if suggested_mode == "ask_clarify":
-                decision = "ask_clarification"
-            elif suggested_mode in {"debug", "selfdrive"} and trigger_id:
-                decision = "trigger"
-            else:
-                decision = "no_trigger"
-
-        if (decision == "ask_clarification" or suggested_mode == "ask_clarify") and trigger_id:
-            self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
-            self.mon["nl_overlay_last_target"] = trigger_id
-            self.mon["nl_overlay_last_action"] = "ask_clarification"
-            self.mon["nl_overlay_last_reason"] = ",".join(pred.get("missing_slots") or [])
-            self.mon["nl_overlay_last_confidence"] = confidence
-            return pred
-
-        if decision != "trigger" or not trigger_id:
-            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
-            return ""
-        if not execution_allowed:
-            self.mon["nl_overlay_abstain"] = int(self.mon.get("nl_overlay_abstain", 0) or 0) + 1
-            return ""
-
-        min_conf = float(self.nl_control_overlay_min_confidence)
-        min_margin = float(self.nl_control_overlay_min_margin)
-        if confidence < min_conf or margin < min_margin:
-            self.mon["nl_overlay_ambiguous"] = int(self.mon.get("nl_overlay_ambiguous", 0) or 0) + 1
-            return ""
-
-        self.mon["nl_overlay_hits"] = int(self.mon.get("nl_overlay_hits", 0) or 0) + 1
-        self.mon["nl_overlay_last_target"] = trigger_id
-        self.mon["nl_overlay_last_action"] = "trigger"
-        self.mon["nl_overlay_last_reason"] = "semantic_overlay"
-        self.mon["nl_overlay_last_confidence"] = confidence
-        return pred
-
     def _normalize_python_command(self, command: str) -> str:
         return str(command or "").strip()
 
