@@ -1,15 +1,15 @@
 {
   "total": 200,
-  "action_accuracy": 0.575,
-  "action_macro_f1": 0.5478,
-  "scope_accuracy": 0.665,
+  "action_accuracy": 0.815,
+  "action_macro_f1": 0.8211,
+  "scope_accuracy": 0.8,
   "confirm_accuracy": 0.905,
   "confirm_f1": 0.7765,
   "false_trigger_rate": 0.0,
   "error_buckets": {
-    "scope_mismatch": 67,
-    "action_mismatch": 85,
-    "confirm_mismatch": 19
+    "scope_mismatch": 40,
+    "confirm_mismatch": 19,
+    "action_mismatch": 37
   },
   "failures": [
     {
@@ -27,24 +27,6 @@
         "scope": "MAIN",
         "needs_confirm": true,
         "reason": "need_act_execute_heavy;coach_mode=ONESHOT;gap=0.93",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0175",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
         "confidence": 0.88
       }
     },
@@ -77,10 +59,10 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
       }
     },
@@ -95,10 +77,10 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
       }
     },
@@ -118,42 +100,6 @@
         "needs_confirm": false,
         "reason": "insufficient_info_hard_rule",
         "confidence": 0.78
-      }
-    },
-    {
-      "id": "s0187",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0117",
-      "input": "给我3个标题和10个标签，主题是强化学习。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
       }
     },
     {
@@ -247,60 +193,6 @@
       }
     },
     {
-      "id": "s0179",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0193",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0098",
-      "input": "请给我一个7天学习计划，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
       "id": "s0194",
       "input": "请自动迭代修复并跑回归后合并到main。",
       "expected": {
@@ -355,24 +247,6 @@
       }
     },
     {
-      "id": "s0111",
-      "input": "给我8个标题和5个标签，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
       "id": "s0190",
       "input": "请跨系统同步配置并执行部署流程。",
       "expected": {
@@ -388,24 +262,6 @@
         "needs_confirm": true,
         "reason": "need_act_execute_heavy;coach_mode=ONESHOT;gap=0.93",
         "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0082",
-      "input": "请给我一个7天学习计划，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
       }
     },
     {
@@ -455,29 +311,11 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
-      }
-    },
-    {
-      "id": "s0189",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
       }
     },
     {
@@ -491,10 +329,10 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
       }
     },
@@ -553,24 +391,6 @@
       }
     },
     {
-      "id": "s0173",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
       "id": "s0191",
       "input": "请跨系统同步配置并执行部署流程。",
       "expected": {
@@ -586,42 +406,6 @@
         "needs_confirm": true,
         "reason": "need_act_execute_heavy;coach_mode=ONESHOT;gap=0.93",
         "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0198",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0081",
-      "input": "请给我一个7天学习计划，主题是自动化办公。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
       }
     },
     {
@@ -697,60 +481,6 @@
       }
     },
     {
-      "id": "s0115",
-      "input": "给我8个标题和5个标签，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0106",
-      "input": "请给我一个7天学习计划，主题是代码评审。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0102",
-      "input": "请给我一个7天学习计划，主题是AI Agent。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
       "id": "s0091",
       "input": "请解释强化学习并给一个简短模板。",
       "expected": {
@@ -766,24 +496,6 @@
         "needs_confirm": false,
         "reason": "fast_gate_stay_chat",
         "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0184",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
       }
     },
     {
@@ -877,42 +589,6 @@
       }
     },
     {
-      "id": "s0110",
-      "input": "请给我一个7天学习计划，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0089",
-      "input": "给我5个标题和10个标签，主题是代码评审。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
       "id": "s0140",
       "input": "帮我在本地代码里定位触发瓶颈。",
       "expected": {
@@ -959,29 +635,11 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
-      }
-    },
-    {
-      "id": "s0197",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
       }
     },
     {
@@ -999,24 +657,6 @@
         "scope": "MAIN",
         "needs_confirm": true,
         "reason": "need_act_execute_heavy;coach_mode=ONESHOT;gap=0.93",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0177",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
         "confidence": 0.88
       }
     },
@@ -1039,24 +679,6 @@
       }
     },
     {
-      "id": "s0161",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
       "id": "s0136",
       "input": "请在仓库里排查延迟并给修复建议。",
       "expected": {
@@ -1067,65 +689,11 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
-      }
-    },
-    {
-      "id": "s0114",
-      "input": "给我8个标题和10个标签，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0095",
-      "input": "给我3个标题和12个标签，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0107",
-      "input": "给我8个标题和10个标签，主题是检索增强。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
       }
     },
     {
@@ -1255,78 +823,6 @@
       }
     },
     {
-      "id": "s0093",
-      "input": "请给我一个30天学习计划，主题是自动化办公。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0109",
-      "input": "给我3个标题和5个标签，主题是强化学习。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0178",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0163",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
       "id": "s0097",
       "input": "请解释代码评审并给一个简短模板。",
       "expected": {
@@ -1355,47 +851,11 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
-      }
-    },
-    {
-      "id": "s0186",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0090",
-      "input": "给我5个标题和12个标签，主题是AI Agent。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
       }
     },
     {
@@ -1471,24 +931,6 @@
       }
     },
     {
-      "id": "s0172",
-      "input": "帮我删除旧文件并发布新版本。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
       "id": "s0099",
       "input": "请解释检索增强并给一个简短模板。",
       "expected": {
@@ -1561,24 +1003,6 @@
       }
     },
     {
-      "id": "s0086",
-      "input": "给我8个标题和10个标签，主题是自动化办公。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
       "id": "s0162",
       "input": "请自动迭代修复并跑回归后合并到main。",
       "expected": {
@@ -1607,65 +1031,11 @@
         "needs_confirm": false
       },
       "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "action": "EXECUTE_LIGHT",
+        "scope": "PROJECT_ONLY",
         "needs_confirm": true,
-        "reason": "confirm_required_gate",
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=1.04;confirm_required_gate",
         "confidence": 0.82
-      }
-    },
-    {
-      "id": "s0087",
-      "input": "给我5个标题和10个标签，主题是AI Agent。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0105",
-      "input": "请给我一个30天学习计划，主题是提示词工程。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0100",
-      "input": "给我3个标题和10个标签，主题是自动化办公。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
       }
     },
     {
@@ -1705,24 +1075,6 @@
       }
     },
     {
-      "id": "s0180",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
       "id": "s0113",
       "input": "请解释强化学习并给一个简短模板。",
       "expected": {
@@ -1738,42 +1090,6 @@
         "needs_confirm": false,
         "reason": "fast_gate_stay_chat",
         "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0166",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
-      "id": "s0183",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
       }
     },
     {
@@ -1921,42 +1237,6 @@
       }
     },
     {
-      "id": "s0083",
-      "input": "给我8个标题和12个标签，主题是提示词工程。",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": [
-          "MAIN"
-        ],
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "fast_gate_stay_chat",
-        "confidence": 0.86
-      }
-    },
-    {
-      "id": "s0167",
-      "input": "帮我批量修改仓库配置并推到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": [
-          "PROJECT_ONLY"
-        ],
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": true,
-        "reason": "confirm_required_gate",
-        "confidence": 0.88
-      }
-    },
-    {
       "id": "s0147",
       "input": "请执行一次轻量诊断，看看安全问题。",
       "expected": {
@@ -1980,20 +1260,20 @@
       "ASK_CLARIFY": 40
     },
     "EXECUTE_HEAVY": {
-      "EXECUTE_HEAVY": 14,
-      "ASK_CLARIFY": 26
+      "EXECUTE_HEAVY": 33,
+      "ASK_CLARIFY": 7
     },
     "CHAT": {
       "CHAT": 34,
       "ASK_CLARIFY": 6
     },
     "EXECUTE_LIGHT": {
-      "ASK_CLARIFY": 21,
-      "EXECUTE_LIGHT": 19
+      "EXECUTE_LIGHT": 27,
+      "ASK_CLARIFY": 13
     },
     "TOOL_LIGHT": {
-      "TOOL_LIGHT": 8,
-      "CHAT": 32
+      "TOOL_LIGHT": 29,
+      "CHAT": 11
     }
   }
 }

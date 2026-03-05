@@ -224,6 +224,8 @@ class LLMRouter:
             return False
         if self._has_goal(text):
             return True
+        if re.search(r"^(请)?给我", low, re.IGNORECASE):
+            return True
         vague_issue = bool(
             re.search(r"(这个有点不太对劲|这个是不是有问题|这个能不能做得更好一点|你觉得怎么样|有点怪|说不上来|一部分不是我想要的)", low, re.IGNORECASE)
         )
@@ -359,10 +361,10 @@ class RouterStateMachine:
             if route.needs_confirm and not bool(confirmed):
                 self.state = "CLARIFYING"
                 return RouterOutput(
-                    action="ASK_CLARIFY",
-                    scope="MAIN",
+                    action=route.action,
+                    scope=route.scope,
                     needs_confirm=True,
-                    reason="confirm_required_gate",
+                    reason=f"{route.reason};confirm_required_gate",
                     confidence=max(0.0, min(1.0, route.confidence)),
                 )
         return route
