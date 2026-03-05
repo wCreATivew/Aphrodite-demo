@@ -1,38 +1,32 @@
 {
   "total": 35,
-  "action_accuracy": 0.2571,
-  "scope_accuracy": 0.7714,
-  "confirm_compliance": 0.8286,
+  "action_accuracy": 0.8571,
+  "action_macro_f1": 0.7667,
+  "scope_accuracy": 0.8857,
+  "confirm_accuracy": 0.8,
+  "confirm_f1": 0.3636,
+  "false_trigger_rate": 0.0,
+  "error_buckets": {
+    "action_mismatch": 5,
+    "scope_mismatch": 4,
+    "confirm_mismatch": 7
+  },
   "failures": [
-    {
-      "id": "u0001",
-      "input": "帮我看一下这个项目有没有明显的安全隐患",
-      "expected": {
-        "action": "EXECUTE_LIGHT",
-        "scope": "PROJECT_ONLY",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "PROJECT_ONLY",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
     {
       "id": "u0002",
       "input": "帮我把语义触发器调得更保守一点，减少误触发，但不要影响“明确执行请求”的触发率",
       "expected": {
         "action": "EXECUTE_LIGHT",
-        "scope": "PROJECT_ONLY",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
         "needs_confirm": false
       },
       "predicted": {
-        "action": "EXECUTE_LIGHT",
+        "action": "ASK_CLARIFY",
         "scope": "MAIN",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
+        "reason": "insufficient_info_hard_rule",
         "confidence": 0.78
       }
     },
@@ -41,7 +35,9 @@
       "input": "我刚刚在 GitHub 上把仓库改名了，现在本地 push 失败了，帮我修一下",
       "expected": {
         "action": "EXECUTE_HEAVY",
-        "scope": "PROJECT_ONLY",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
         "needs_confirm": true
       },
       "predicted": {
@@ -49,7 +45,7 @@
         "scope": "MAIN",
         "needs_confirm": true,
         "reason": "confirm_required_gate",
-        "confidence": 0.84
+        "confidence": 0.82
       }
     },
     {
@@ -57,31 +53,17 @@
       "input": "帮我总结一下当前程序中可能出现的危险，但不要引用我之前的任务和对话，只看代码仓库给结论",
       "expected": {
         "action": "ASK_CLARIFY",
-        "scope": "PROJECT_ONLY",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
         "needs_confirm": true
       },
       "predicted": {
         "action": "TOOL_LIGHT",
         "scope": "PROJECT_ONLY",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.74
-      }
-    },
-    {
-      "id": "u0005",
-      "input": "我刚刚说“帮我总结风险”，这次我只要你在本地仓库里做静态审计，不要联网，也不要跑测试",
-      "expected": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "TOOL_LIGHT",
-        "scope": "PROJECT_ONLY",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.74
+        "reason": "need_act_tool_light;coach_mode=ONESHOT;gap=0.62",
+        "confidence": 0.8
       }
     },
     {
@@ -89,47 +71,17 @@
       "input": "我在 B 站看到一个讲强化学习的视频，但太长了，你帮我快速学会它的核心内容，然后给我一个今晚能学完的学习计划",
       "expected": {
         "action": "EXECUTE_LIGHT",
-        "scope": "MAIN",
+        "scope": [
+          "MAIN"
+        ],
         "needs_confirm": false
       },
       "predicted": {
         "action": "TOOL_LIGHT",
         "scope": "MAIN",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.74
-      }
-    },
-    {
-      "id": "u0008",
-      "input": "我准备发一条小红书，主题是“我一周学会强化学习入门”，你帮我写：标题 5 个、正文 1 篇、再给 10 个热门标签，风格要真实不营销",
-      "expected": {
-        "action": "TOOL_LIGHT",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0009",
-      "input": "我想让 agent 自动迭代自己：每次运行后自动分析失败原因、提出小改动方案、跑一轮回归评测，再决定要不要合并到主分支。",
-      "expected": {
-        "action": "EXECUTE_HEAVY",
-        "scope": "MAIN",
-        "needs_confirm": true
-      },
-      "predicted": {
-        "action": "EXECUTE_LIGHT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.78
+        "reason": "need_act_tool_light;coach_mode=ONESHOT;gap=0.51",
+        "confidence": 0.8
       }
     },
     {
@@ -137,15 +89,17 @@
       "input": "我今天不太想写代码，但这个 bug 明天必须修好，你帮我想一个最轻松的解决办法",
       "expected": {
         "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "scope": [
+          "MAIN"
+        ],
         "needs_confirm": true
       },
       "predicted": {
-        "action": "CHAT",
-        "scope": "PROJECT_ONLY",
+        "action": "ASK_CLARIFY",
+        "scope": "MAIN",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
+        "reason": "insufficient_info_hard_rule",
+        "confidence": 0.78
       }
     },
     {
@@ -153,14 +107,16 @@
       "input": "我想把这个 agent 下载安装到本地跑起来，但我不太会配置环境，你一步步带我做，尽量别让我看太多命令行",
       "expected": {
         "action": "ASK_CLARIFY",
-        "scope": "MAIN",
+        "scope": [
+          "MAIN"
+        ],
         "needs_confirm": true
       },
       "predicted": {
-        "action": "EXECUTE_LIGHT",
-        "scope": "ISOLATED",
+        "action": "ASK_CLARIFY",
+        "scope": "MAIN",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
+        "reason": "insufficient_info_hard_rule",
         "confidence": 0.78
       }
     },
@@ -169,63 +125,18 @@
       "input": "我觉得我的 agent 现在有点笨，你帮我想三个最可能的原因",
       "expected": {
         "action": "EXECUTE_HEAVY",
-        "scope": "MAIN",
+        "scope": [
+          "MAIN",
+          "PROJECT_ONLY"
+        ],
         "needs_confirm": true
       },
       "predicted": {
-        "action": "CHAT",
+        "action": "ASK_CLARIFY",
         "scope": "MAIN",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0015",
-      "input": "如果有一天这个 agent 能自己长出新的能力，比如自动学会新工具，那会是什么机制？",
-      "expected": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "EXECUTE_LIGHT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
+        "reason": "insufficient_info_hard_rule",
         "confidence": 0.78
-      }
-    },
-    {
-      "id": "u0016",
-      "input": "这个有点不太对劲",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0017",
-      "input": "你看看这个",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
       }
     },
     {
@@ -233,111 +144,17 @@
       "input": "感觉这个系统有点慢",
       "expected": {
         "action": "EXECUTE_LIGHT",
-        "scope": "PROJECT_ONLY",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0019",
-      "input": "这个能不能做得更好一点",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0021",
-      "input": "这个是不是有问题",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0022",
-      "input": "你觉得怎么样",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0023",
-      "input": "这个应该自动一点",
-      "expected": {
-        "action": "CHAT",
-        "scope": "MAIN",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
         "needs_confirm": false
       },
       "predicted": {
         "action": "EXECUTE_LIGHT",
         "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.78
-      }
-    },
-    {
-      "id": "u0024",
-      "input": "你帮我想想办法",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0026",
-      "input": "我感觉你刚才的回答有点不对，但我也说不上来是哪。",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
+        "needs_confirm": true,
+        "reason": "need_act_execute_light;coach_mode=ONESHOT;gap=0.93",
+        "confidence": 0.82
       }
     },
     {
@@ -345,63 +162,17 @@
       "input": "这个仓库我刚 clone 下来，你帮我看看大概是干什么的。",
       "expected": {
         "action": "TOOL_LIGHT",
-        "scope": "MAIN",
+        "scope": [
+          "MAIN"
+        ],
         "needs_confirm": false
       },
       "predicted": {
-        "action": "CHAT",
-        "scope": "PROJECT_ONLY",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0028",
-      "input": "我希望你以后能自己发现问题，而不是每次都等我说。",
-      "expected": {
         "action": "TOOL_LIGHT",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0029",
-      "input": "我想把这个 agent 开源，但又担心代码被滥用，你怎么看？",
-      "expected": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
         "scope": "PROJECT_ONLY",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0030",
-      "input": "我刚才给你的那个任务，其实我也不确定是不是个好主意。",
-      "expected": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.62
+        "reason": "need_act_tool_light;coach_mode=ONESHOT;gap=0.62",
+        "confidence": 0.8
       }
     },
     {
@@ -409,76 +180,57 @@
       "input": "我想让这个 agent 能在我睡觉的时候自己学习。",
       "expected": {
         "action": "ASK_CLARIFY",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": true
+      },
+      "predicted": {
+        "action": "ASK_CLARIFY",
         "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "insufficient_info_hard_rule",
+        "confidence": 0.78
+      }
+    },
+    {
+      "id": "u0033",
+      "input": "如果我把整个电脑权限都给你，你会先做什么？",
+      "expected": {
+        "action": "CHAT",
+        "scope": [
+          "MAIN"
+        ],
         "needs_confirm": true
       },
       "predicted": {
         "action": "CHAT",
         "scope": "MAIN",
         "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0034",
-      "input": "我感觉你刚才做的那些事情，有一部分其实不是我想要的。",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
-      }
-    },
-    {
-      "id": "u0035",
-      "input": "我想要你能够像b站上那些做ai视频的人一样，学会引导提示词，调整音轨，运用工具。",
-      "expected": {
-        "action": "ASK_CLARIFY",
-        "scope": "MAIN",
-        "needs_confirm": false
-      },
-      "predicted": {
-        "action": "CHAT",
-        "scope": "MAIN",
-        "needs_confirm": false,
-        "reason": "heuristic_fallback",
-        "confidence": 0.7
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
       }
     }
   ],
   "confusion_matrix": {
     "EXECUTE_LIGHT": {
-      "CHAT": 2,
-      "EXECUTE_LIGHT": 1,
+      "EXECUTE_LIGHT": 2,
+      "ASK_CLARIFY": 1,
       "TOOL_LIGHT": 1
     },
     "EXECUTE_HEAVY": {
-      "ASK_CLARIFY": 1,
-      "EXECUTE_LIGHT": 1,
-      "CHAT": 1
+      "ASK_CLARIFY": 2,
+      "EXECUTE_HEAVY": 1
     },
     "ASK_CLARIFY": {
       "TOOL_LIGHT": 1,
-      "CHAT": 11,
-      "EXECUTE_LIGHT": 1,
-      "ASK_CLARIFY": 1
+      "ASK_CLARIFY": 13
     },
     "CHAT": {
-      "TOOL_LIGHT": 1,
-      "CHAT": 6,
-      "EXECUTE_LIGHT": 2,
-      "ASK_CLARIFY": 1
+      "CHAT": 10
     },
     "TOOL_LIGHT": {
-      "TOOL_LIGHT": 1,
-      "CHAT": 3
+      "TOOL_LIGHT": 4
     }
   }
 }
