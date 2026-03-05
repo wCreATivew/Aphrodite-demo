@@ -20,8 +20,8 @@ import os
 import queue
 import re
 import fnmatch
-import subprocess
 import sys
+import subprocess
 import threading
 import time
 import traceback
@@ -60,6 +60,7 @@ from .prompt_manager import PromptManager, PromptTuneResult
 from .patch_executor import PatchExecutionTransaction
 from .runtime_state import RuntimeConfig, apply_idle_nudge, load_state, mark_user_turn, save_state, update_topic
 from .screen_capture import capture_screen_to_file
+from .semantic_intent_lane import SemanticIntentLane, list_semantic_intent_modules
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
@@ -206,6 +207,13 @@ class RuntimeEngine:
         self.nl_control_overlay_shadow_mode = self._env_bool("NL_CONTROL_OVERLAY_SHADOW_MODE", "0")
         self.semantic_guard_conf_threshold = self._env_float(
             "SEMANTIC_GUARD_CONF_THRESHOLD", 0.74, min_v=0.10, max_v=0.99
+        )
+        self.semantic_intent_lane = SemanticIntentLane(
+            semantic_trigger_enabled=self.semantic_trigger_enabled,
+            semantic_trigger_top_k=self.semantic_trigger_top_k,
+            semantic_guard_conf_threshold=self.semantic_guard_conf_threshold,
+            semantic_debug_autofix_enabled=self.semantic_debug_autofix_enabled,
+            required_runtime_triggers=REQUIRED_RUNTIME_TRIGGERS,
         )
         self.nl_control_overlay_min_margin = self._env_float("NL_CONTROL_OVERLAY_MIN_MARGIN", 0.12)
         self.debug_local_model_min_confidence = self._env_float("DEBUG_LOCAL_MODEL_MIN_CONFIDENCE", 0.68)
@@ -822,67 +830,8 @@ class RuntimeEngine:
         return False
 
     def _init_semantic_trigger_engine(self) -> None:
-        self.mon.setdefault("semantic_trigger_enabled", 0)
-        self.mon.setdefault("semantic_trigger_ready", 0)
-        self.mon.setdefault("semantic_trigger_last_error", "")
-        self.mon.setdefault("semantic_trigger_required_missing", "")
-        self.mon.setdefault("semantic_trigger_calls", 0)
-        self.mon.setdefault("semantic_trigger_hits", 0)
-        self.mon.setdefault("semantic_trigger_last_trigger", "")
-        self.mon.setdefault("semantic_trigger_last_decision", "")
-        self.mon.setdefault("semantic_trigger_last_confidence", 0.0)
-        self.mon.setdefault("semantic_trigger_last_margin", 0.0)
-        self.mon.setdefault("semantic_debug_autofix_enabled", int(bool(self.semantic_debug_autofix_enabled)))
-        self.mon.setdefault("semantic_debug_autofix_runs", 0)
-        self.mon.setdefault("semantic_debug_autofix_ok", 0)
-        self.mon.setdefault("semantic_debug_autofix_fail", 0)
-        self.mon.setdefault("semantic_debug_last_file", "")
-        self.mon.setdefault("semantic_debug_last_result", "")
-        if not bool(self.semantic_trigger_enabled):
-            return
-
-        try:
-            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            src_dir = os.path.join(repo_root, "src")
-            if os.path.isdir(src_dir) and src_dir not in sys.path:
-                sys.path.insert(0, src_dir)
-
-            from semantic_trigger.config import load_app_config as _ste_load_app_config
-            from semantic_trigger.engine import SemanticTriggerEngine as _SemanticTriggerEngine
-            from semantic_trigger.registry import load_trigger_registry as _ste_load_trigger_registry
-
-            reg_path = str(
-                os.getenv("SEMANTIC_TRIGGER_REGISTRY")
-                or os.path.join(repo_root, "data", "triggers", "default_triggers.yaml")
-            ).strip()
-            cfg_path = str(
-                os.getenv("SEMANTIC_TRIGGER_CONFIG")
-                or os.path.join(repo_root, "configs", "app.example.yaml")
-            ).strip()
-
-            reg = _ste_load_trigger_registry(reg_path)
-            cfg = _ste_load_app_config(cfg_path if os.path.exists(cfg_path) else "")
-            self.semantic_trigger_engine = _SemanticTriggerEngine.build_default(reg, cfg)
-            missing_required = [tid for tid in REQUIRED_RUNTIME_TRIGGERS if reg.get(tid) is None]
-            self.mon["semantic_trigger_required_missing"] = ",".join(missing_required)
-            if missing_required:
-                self.mon["semantic_trigger_last_error"] = (
-                    f"missing_required_triggers:{','.join(missing_required)}"
-                )
-            try:
-                if getattr(self.semantic_trigger_engine, "logger", None) is not None:
-                    self.semantic_trigger_engine.logger.setLevel(logging.WARNING)
-            except Exception:
-                pass
-            self.mon["semantic_trigger_enabled"] = 1
-            self.mon["semantic_trigger_ready"] = 1
-            if not missing_required:
-                self.mon["semantic_trigger_last_error"] = ""
-        except Exception as e:
-            self.semantic_trigger_engine = None
-            self.mon["semantic_trigger_enabled"] = int(bool(self.semantic_trigger_enabled))
-            self.mon["semantic_trigger_ready"] = 0
-            self.mon["semantic_trigger_last_error"] = f"{type(e).__name__}: {e}"
+        self.semantic_intent_lane.init_engine(self.mon)
+        self.semantic_trigger_engine = self.semantic_intent_lane.semantic_trigger_engine
 
     def _looks_like_direct_debug_intent(self, user_text: str) -> bool:
         q = str(user_text or "").strip().lower()
@@ -1009,143 +958,24 @@ class RuntimeEngine:
         return False
 
     def _semantic_infer(self, text: str) -> Optional[Dict[str, Any]]:
-        if not bool(self.semantic_trigger_enabled):
-            return None
-        if self.semantic_trigger_engine is None:
-            return None
-        q = str(text or "").strip()
-        if not q:
-            return None
-        try:
-            self.mon["semantic_trigger_calls"] = int(self.mon.get("semantic_trigger_calls", 0) or 0) + 1
-            result = self.semantic_trigger_engine.infer(q, top_k=int(self.semantic_trigger_top_k))
-            margin = 0.0
-            try:
-                margin = float((result.debug_trace or {}).get("margin", 0.0) or 0.0)
-            except Exception:
-                margin = 0.0
-            payload = {
-                # New contract
-                "intent": "",
-                "decision": str(result.decision),
-                "selected_trigger": str(result.selected_trigger or ""),
-                "confidence": float(result.confidence),
-                "required_slots": [],
-                "missing_slots": list(result.missing_slots or []),
-                "risk_level": "low",
-                "suggested_mode": "chat",
-                # keep typo-compatible alias because external callers may copy this field name
-                "suuggested_mode": "chat",
-                "execution_allowed": False,
-                # Backward-compatible fields
-                "extracted_slots": dict(result.extracted_slots or {}),
-                "reasons": list(result.reasons or []),
-                "margin": float(margin),
-                "top_trigger": "",
-                "top_score": 0.0,
-            }
-            if result.candidates:
-                try:
-                    top = result.candidates[0]
-                    payload["top_trigger"] = str(getattr(top, "trigger_id", "") or "")
-                    payload["top_score"] = float(getattr(top, "combined_score", 0.0) or 0.0)
-                except Exception:
-                    pass
-            selected_trigger = str(payload.get("selected_trigger") or "")
-            top_trigger = str(payload.get("top_trigger") or "")
-            intent = selected_trigger or top_trigger or "chit_chat"
-            required_slots = self._semantic_required_slots_for_trigger(intent)
-            missing_slots = [str(x) for x in list(payload.get("missing_slots") or []) if str(x).strip()]
-            suggested_mode = self._semantic_suggested_mode(
-                decision=str(payload.get("decision") or ""),
-                intent=intent,
-                missing_slots=missing_slots,
-            )
-            risk_level = self._semantic_risk_level(
-                suggested_mode=suggested_mode,
-                confidence=float(payload.get("confidence") or 0.0),
-                missing_slots=missing_slots,
-            )
-            payload["intent"] = intent
-            payload["required_slots"] = required_slots
-            payload["missing_slots"] = missing_slots
-            payload["suggested_mode"] = suggested_mode
-            payload["suuggested_mode"] = suggested_mode
-            payload["risk_level"] = risk_level
-            payload["execution_allowed"] = False
-            guard = self._semantic_guard_decision(
-                text=q,
-                intent=intent,
-                suggested_mode=suggested_mode,
-                confidence=float(payload.get("confidence") or 0.0),
-            )
-            if isinstance(guard, dict):
-                payload["suggested_mode"] = str(guard.get("suggested_mode") or payload["suggested_mode"])
-                payload["suuggested_mode"] = str(payload["suggested_mode"])
-                payload["execution_allowed"] = bool(guard.get("execution_allowed"))
-                payload["guard_reason"] = str(guard.get("reason") or "")
-            self.semantic_trigger_last = dict(payload)
-            self.mon["semantic_trigger_last_trigger"] = str(payload.get("selected_trigger") or "")
-            self.mon["semantic_trigger_last_decision"] = str(payload.get("decision") or "")
-            self.mon["semantic_trigger_last_confidence"] = float(payload.get("confidence") or 0.0)
-            self.mon["semantic_trigger_last_margin"] = float(payload.get("margin") or 0.0)
-            if str(payload.get("decision")) in {"trigger", "ask_clarification"} and str(
-                payload.get("selected_trigger") or ""
-            ):
-                self.mon["semantic_trigger_hits"] = int(self.mon.get("semantic_trigger_hits", 0) or 0) + 1
-            return payload
-        except Exception as e:
-            self.mon["semantic_trigger_last_error"] = f"{type(e).__name__}: {e}"
-            return None
+        payload = self.semantic_intent_lane.infer(text, self.mon)
+        self.semantic_trigger_engine = self.semantic_intent_lane.semantic_trigger_engine
+        self.semantic_trigger_last = dict(self.semantic_intent_lane.semantic_trigger_last or {})
+        return payload
+
+    def _list_semantic_intent_modules(self) -> List[Dict[str, str]]:
+        return list_semantic_intent_modules()
 
     def _semantic_required_slots_for_trigger(self, trigger_id: str) -> List[str]:
-        tid = str(trigger_id or "").strip()
-        if not tid:
-            return []
-        try:
-            reg = getattr(self.semantic_trigger_engine, "registry", None)
-            if reg is None:
-                return []
-            trig = reg.get(tid) if hasattr(reg, "get") else None
-            if trig is None:
-                return []
-            required = []
-            for slot in list(getattr(trig, "required_slots", []) or []):
-                if isinstance(slot, dict):
-                    name = str(slot.get("slot_name") or "").strip()
-                else:
-                    name = str(getattr(slot, "slot_name", "") or "").strip()
-                if name:
-                    required.append(name)
-            return required
-        except Exception:
-            return []
+        return self.semantic_intent_lane.semantic_required_slots_for_trigger(trigger_id)
 
     @staticmethod
     def _semantic_suggested_mode(decision: str, intent: str, missing_slots: List[str]) -> str:
-        d = str(decision or "").strip().lower()
-        i = str(intent or "").strip().lower()
-        if d == "ask_clarification" or bool(missing_slots):
-            return "ask_clarify"
-        if i == "code_debug":
-            return "debug"
-        if i in {"chit_chat", "smalltalk_chat", "smalltalk", "chat"}:
-            return "chat"
-        if d == "trigger" and i:
-            return "selfdrive"
-        return "chat"
+        return SemanticIntentLane.semantic_suggested_mode(decision, intent, missing_slots)
 
     @staticmethod
     def _semantic_risk_level(suggested_mode: str, confidence: float, missing_slots: List[str]) -> str:
-        mode = str(suggested_mode or "").strip().lower()
-        conf = float(confidence or 0.0)
-        if mode == "debug":
-            return "high"
-        if mode == "selfdrive":
-            return "high" if conf >= 0.70 else "medium"
-        if mode == "ask_clarify":
-            return "medium" if missing_slots else "low"
-        return "low"
+        return SemanticIntentLane.semantic_risk_level(suggested_mode, confidence, missing_slots)
 
     def _semantic_guard_decision(
         self,
@@ -1155,49 +985,12 @@ class RuntimeEngine:
         suggested_mode: str,
         confidence: float,
     ) -> Dict[str, Any]:
-        mode = str(suggested_mode or "").strip().lower()
-        intent_key = str(intent or "").strip().lower()
-        q = str(text or "").strip().lower()
-        conf = float(confidence or 0.0)
-        threshold = float(self.semantic_guard_conf_threshold)
-
-        is_high_risk_control = False
-        if mode in {"selfdrive", "debug"}:
-            is_high_risk_control = True
-        if intent_key in {"code_debug"}:
-            is_high_risk_control = True
-        if re.search(
-            r"(selfdrive|autopilot|自主推进|自动推进|批量执行|batch|批量|系统改动|系统级|改系统|system change|system-wide)",
-            q,
-            re.IGNORECASE,
-        ):
-            is_high_risk_control = True
-
-        if conf < threshold:
-            if is_high_risk_control:
-                return {
-                    "suggested_mode": "ask_user_confirm",
-                    "execution_allowed": False,
-                    "reason": f"low_confidence<{threshold:.2f}",
-                }
-            return {
-                "suggested_mode": mode or "chat",
-                "execution_allowed": False,
-                "reason": f"low_confidence_non_control<{threshold:.2f}",
-            }
-
-        if is_high_risk_control:
-            return {
-                "suggested_mode": "shadow_plan_only",
-                "execution_allowed": False,
-                "reason": "high_risk_control_intent",
-            }
-
-        return {
-            "suggested_mode": mode or "chat",
-            "execution_allowed": False,
-            "reason": "",
-        }
+        return self.semantic_intent_lane.semantic_guard_decision(
+            text=text,
+            intent=intent,
+            suggested_mode=suggested_mode,
+            confidence=confidence,
+        )
 
     def _extract_python_target_from_text(self, user_text: str) -> str:
         text = str(user_text or "")
@@ -3728,32 +3521,6 @@ class RuntimeEngine:
             self._task_run_recorder.append_step(cur, step)
         except Exception:
             pass
-                _append_log(
-                    component="worker",
-                    action="execute",
-                    inp={"task_id": evt.get("task_id"), "selected_expert": evt.get("selected_expert")},
-                    out={"ok": evt.get("ok"), "wait_user": evt.get("wait_user")},
-                    success=bool(int(evt.get("ok") or 0)),
-                    error=str(evt.get("error") or ""),
-                )
-                if str(evt.get("selected_expert") or "") == "codex":
-                    _append_log(
-                        component="codex_delegate",
-                        action="delegate_call",
-                        inp={"task_id": evt.get("task_id")},
-                        out={"ok": evt.get("ok")},
-                        success=bool(int(evt.get("ok") or 0)),
-                        error=str(evt.get("error") or ""),
-                    )
-            elif ev in {"failure_routed", "planner_compile_failed_route", "local_replan"}:
-                _append_log(
-                    component="failure_router",
-                    action=ev,
-                    inp={"task_id": evt.get("task_id"), "action": evt.get("action")},
-                    out={"reason": evt.get("reason"), "category": evt.get("category")},
-                    success=False,
-                    error=str(evt.get("reason") or ev),
-                )
 
     def _build_selfdrive_kernel_state(self, goal: str, duration_minutes: Optional[int]) -> KernelAgentState:
         normalized_goal = self._normalize_selfdrive_goal(goal) or "持续推进当前任务"
