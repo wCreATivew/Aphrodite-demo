@@ -136,7 +136,7 @@ class SemanticIntentLane:
                     "reason": f"low_confidence<{threshold:.2f}",
                 }
             return {
-                "suggested_mode": str(suggested_mode or "chat"),
+                "suggested_mode": "ask_clarify",
                 "execution_allowed": False,
                 "reason": f"low_confidence_non_control<{threshold:.2f}",
             }
