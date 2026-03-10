@@ -134,6 +134,97 @@ def _learning_tokens_from_text(text: str, phrase_filter: PhraseFilter) -> List[s
     return _dedup_keep_order([c for c in cands if c])
 
 
+# ========== Hybrid RAG: 混合检索（关键词 + 向量） ==========
+
+def hybrid_retrieve(
+    query: str,
+    memory_items: List[Dict[str, Any]],
+    phrase_filter: PhraseFilter,
+    vector_index: Optional[Any] = None,
+    embeddings: Optional[np.ndarray] = None,
+    k: int = 6,
+    keyword_weight: float = 0.4,
+    vector_weight: float = 0.6,
+) -> List[Dict[str, Any]]:
+    """
+    Hybrid RAG: 混合检索（关键词 + 向量）
+    
+    Args:
+        query: 查询文本
+        memory_items: 记忆列表
+        phrase_filter: 关键词过滤器
+        vector_index: FAISS 索引（可选）
+        embeddings: 记忆嵌入向量（可选）
+        k: 返回数量
+        keyword_weight: 关键词权重（默认 0.4）
+        vector_weight: 向量权重（默认 0.6）
+    
+    Returns:
+        检索结果（按混合分数排序）
+    """
+    if not memory_items:
+        return []
+    
+    # 1. 关键词检索
+    query_keywords = set(phrase_candidates(query, phrase_filter, max_candidates=20))
+    keyword_scores = []
+    
+    for item in memory_items:
+        text = item.get('text', '')
+        item_keywords = set(phrase_candidates(text, phrase_filter, max_candidates=40))
+        
+        # Jaccard 相似度
+        if query_keywords and item_keywords:
+            intersection = len(query_keywords & item_keywords)
+            union = len(query_keywords | item_keywords)
+            keyword_score = intersection / union if union > 0 else 0.0
+        else:
+            keyword_score = 0.0
+        
+        keyword_scores.append(keyword_score)
+    
+    # 2. 向量检索（如果可用）
+    vector_scores = np.zeros(len(memory_items))
+    if vector_index is not None and embeddings is not None and len(embeddings) > 0:
+        try:
+            from sentence_transformers import SentenceTransformer
+            # 查询嵌入
+            model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
+            query_emb = model.encode([query], normalize_embeddings=True, show_progress_bar=False)
+            query_vec = np.asarray(query_emb[0], dtype=np.float32)
+            
+            # FAISS 检索
+            D, I = vector_index.search(query_vec.reshape(1, -1), min(k * 2, len(memory_items)))
+            
+            # 归一化向量分数到 0-1
+            if len(D[0]) > 0:
+                max_score = D[0][0] if D[0][0] > 0 else 1.0
+                for i, idx in enumerate(I[0]):
+                    if idx < len(memory_items):
+                        vector_scores[idx] = D[0][i] / max_score
+        except Exception as e:
+            print(f"[Hybrid RAG] 向量检索失败：{e}，降级到关键词检索")
+    
+    # 3. 混合分数
+    hybrid_scores = []
+    for i in range(len(memory_items)):
+        score = keyword_weight * keyword_scores[i] + vector_weight * vector_scores[i]
+        hybrid_scores.append(score)
+    
+    # 4. 排序并返回 top-k
+    sorted_indices = np.argsort(hybrid_scores)[::-1][:k]
+    
+    results = []
+    for idx in sorted_indices:
+        item = memory_items[idx].copy()
+        item['hybrid_score'] = float(hybrid_scores[idx])
+        item['keyword_score'] = float(keyword_scores[idx])
+        item['vector_score'] = float(vector_scores[idx])
+        results.append(item)
+    
+    return results
+
+
 def learn_lists_from_feedback(
     text: str,
     rating: float,
