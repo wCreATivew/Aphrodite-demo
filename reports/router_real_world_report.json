@@ -1,0 +1,325 @@
+{
+  "total": 20,
+  "action_accuracy": 0.3,
+  "action_macro_f1": 0.1553,
+  "scope_accuracy": 0.7,
+  "confirm_accuracy": 0.8,
+  "confirm_f1": 0.0,
+  "false_trigger_rate": 0.0,
+  "error_buckets": {
+    "action_mismatch": 14,
+    "scope_mismatch": 6,
+    "confirm_mismatch": 4
+  },
+  "failures": [
+    {
+      "id": "real_001",
+      "input": "帮我看看这个 bug 怎么回事",
+      "expected": {
+        "action": "ASK_CLARIFY",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "TOOL_LIGHT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "need_act_tool_light;coach_mode=ONESHOT;gap=0.62",
+        "confidence": 0.8
+      }
+    },
+    {
+      "id": "real_003",
+      "input": "把 test.py 里的 assert 都改成 pytest 风格",
+      "expected": {
+        "action": "EXECUTE_LIGHT",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "ASK_CLARIFY",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "insufficient_info_hard_rule",
+        "confidence": 0.78
+      }
+    },
+    {
+      "id": "real_004",
+      "input": "什么是注意力机制？",
+      "expected": {
+        "action": "TOOL_LIGHT",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_005",
+      "input": "重构整个项目结构，按微服务拆分",
+      "expected": {
+        "action": "EXECUTE_HEAVY",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
+        "needs_confirm": true
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_006",
+      "input": "你觉得我应不应该换工作？",
+      "expected": {
+        "action": "CHAT",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": true
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_007",
+      "input": "帮我写个邮件给老板请假",
+      "expected": {
+        "action": "TOOL_LIGHT",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "ASK_CLARIFY",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "insufficient_info_hard_rule",
+        "confidence": 0.78
+      }
+    },
+    {
+      "id": "real_008",
+      "input": "这个报错我没看懂",
+      "expected": {
+        "action": "ASK_CLARIFY",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_009",
+      "input": "给我一个 Python 学习路线",
+      "expected": {
+        "action": "TOOL_LIGHT",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "ASK_CLARIFY",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "insufficient_info_hard_rule",
+        "confidence": 0.78
+      }
+    },
+    {
+      "id": "real_010",
+      "input": "把所有 print 换成 logging",
+      "expected": {
+        "action": "EXECUTE_LIGHT",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_012",
+      "input": "删除所有未使用的 import",
+      "expected": {
+        "action": "EXECUTE_LIGHT",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_013",
+      "input": "我是不是很没用？",
+      "expected": {
+        "action": "CHAT",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": true
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_014",
+      "input": "上线新版本，记得备份数据库",
+      "expected": {
+        "action": "EXECUTE_HEAVY",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
+        "needs_confirm": true
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_015",
+      "input": "推荐几本机器学习的书",
+      "expected": {
+        "action": "TOOL_LIGHT",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_016",
+      "input": "这个功能怎么实现比较好？",
+      "expected": {
+        "action": "ASK_CLARIFY",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "real_017",
+      "input": "帮我加个单元测试",
+      "expected": {
+        "action": "ASK_CLARIFY",
+        "scope": [
+          "MAIN"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "TOOL_LIGHT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "need_act_tool_light;coach_mode=ONESHOT;gap=0.62",
+        "confidence": 0.8
+      }
+    },
+    {
+      "id": "real_019",
+      "input": "把 API 响应时间优化到 100ms 以内",
+      "expected": {
+        "action": "EXECUTE_LIGHT",
+        "scope": [
+          "PROJECT_ONLY"
+        ],
+        "needs_confirm": false
+      },
+      "predicted": {
+        "action": "CHAT",
+        "scope": "MAIN",
+        "needs_confirm": false,
+        "reason": "fast_gate_stay_chat",
+        "confidence": 0.86
+      }
+    }
+  ],
+  "confusion_matrix": {
+    "ASK_CLARIFY": {
+      "TOOL_LIGHT": 2,
+      "CHAT": 2
+    },
+    "CHAT": {
+      "CHAT": 5
+    },
+    "EXECUTE_LIGHT": {
+      "ASK_CLARIFY": 1,
+      "CHAT": 3
+    },
+    "TOOL_LIGHT": {
+      "CHAT": 2,
+      "ASK_CLARIFY": 2,
+      "TOOL_LIGHT": 1
+    },
+    "EXECUTE_HEAVY": {
+      "CHAT": 2
+    }
+  }
+}
