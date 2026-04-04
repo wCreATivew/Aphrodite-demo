@@ -560,6 +560,9 @@ class RuntimeEngine:
         )
 
     def start(self, with_db_bridge: bool = True, with_idle_watcher: bool = True) -> None:
+        # Protocol mapping note:
+        # Runtime startup is event-loop centric (threaded consumers + event queues).
+        # CLI/DB bridge/idle watcher are all producers for the same event bus.
         self._run_startup_codex_healthcheck_once()
         self._threads.append(
             start_metrics_thread(
@@ -598,6 +601,7 @@ class RuntimeEngine:
         save_state(self.cfg.state_path, self.state)
 
     def run_cli(self) -> int:
+        # CLI is an optional producer adapter, not the single runtime entrypoint.
         print("Aphrodite Runtime (GLM). Press Enter on empty input to exit.")
         print(f"RAG mode: {self.cfg.rag_mode}")
         while not self.stop_event.is_set():
@@ -1727,6 +1731,10 @@ class RuntimeEngine:
         )
 
     def _brain_loop(self) -> None:
+        # Unified protocol mapping:
+        # perception  -> event_q.get(...) + _parse_event(...)
+        # decision    -> immediate_protocol / routing / policy / planning branches
+        # actuation   -> _emit_reply(...) -> reply_q (or bridge side effects)
         while not self.stop_event.is_set():
             try:
                 evt = self.event_q.get(timeout=0.2)
@@ -1738,6 +1746,7 @@ class RuntimeEngine:
                 break
 
             user_text, msg_id, is_idle = self._parse_event(evt)
+            # perception node: raw event -> normalized text/input shape
             if not user_text:
                 continue
             perception = self._perception_fusion(evt=evt, user_text=user_text, msg_id=msg_id, is_idle=is_idle)
@@ -1813,6 +1822,7 @@ class RuntimeEngine:
                     emit_reply=self._emit_reply,
                     mon=self.mon,
                 ).to_dict()
+                # decision node: classify/route user intent into immediate action
                 route_action = str(route_packet.get("action") or "CHAT").upper()
                 self.history.append({"role": "user", "content": user_text})
                 self.history.append({"role": "assistant", "content": str(route_packet.get("immediate") or "")})
@@ -5002,6 +5012,7 @@ class RuntimeEngine:
         return user_text, str(msg_id) if msg_id else None, is_idle
 
     def _mouth_loop(self) -> None:
+        # actuation node: materialize reply events to concrete output sink (stdout/UI bridge)
         while not self.stop_event.is_set():
             try:
                 reply = self.reply_q.get(timeout=0.2)
