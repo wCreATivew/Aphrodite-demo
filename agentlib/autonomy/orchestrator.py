@@ -117,8 +117,25 @@ class Orchestrator:
             task.status = "running"
             task.attempt_count += 1
 
+            actor = str((task.input_payload or {}).get("actor") or "agent")
+            perception = self.store.get_scene_perception(actor=actor)
+            task.input_payload = dict(task.input_payload or {})
+            task.input_payload["scene_perception"] = {
+                "actor": perception.actor,
+                "tick": perception.tick,
+                "objects": perception.objects,
+                "positions": perception.positions,
+                "interactable_points": perception.interactable_points,
+                "environment": perception.environment,
+                "recent_deltas": perception.recent_deltas,
+            }
+
             self.store.set_state(AgentState.EXECUTING)
-            self._trace("executing", "task execution started", {"task_id": task.id, "tool": task.tool_name})
+            self._trace(
+                "executing",
+                "task execution started",
+                {"task_id": task.id, "tool": task.tool_name, "scene_tick": perception.tick},
+            )
             exec_rec = self.executor.execute(goal, task, self.tools, self.store)
             self.store.add_execution(exec_rec)
 
