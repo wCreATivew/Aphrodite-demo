@@ -19,6 +19,30 @@ RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 
 
+class RuntimeEventLifecycle(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    DROPPED = "dropped"
+
+
+class RuntimeEventType(str, Enum):
+    # Input events
+    INPUT_VISUAL_PSEUDO = "input.visual.pseudo"
+    INPUT_AUDIO_PSEUDO = "input.audio.pseudo"
+    INPUT_TOUCH_PSEUDO = "input.touch.pseudo"
+    INPUT_OLFACTORY_PSEUDO = "input.olfactory.pseudo"
+    # Output events
+    OUTPUT_SCENE_ACTION = "output.scene.action"
+    OUTPUT_DIALOG_UTTERANCE = "output.dialog.utterance"
+    OUTPUT_INTERACTION_FEEDBACK = "output.interaction.feedback"
+    # Internal events
+    INTERNAL_BRAIN_DECISION = "internal.brain.decision"
+    INTERNAL_STATE_UPDATED = "internal.state.updated"
+    INTERNAL_MEMORY_WRITE = "internal.memory.write"
+
+
 class SubgoalState(str, Enum):
     DRAFT = "DRAFT"
     READY = "READY"
@@ -254,6 +278,82 @@ class TaskRun:
             summary=_to_optional_str(payload.get("summary")),
             error=_to_optional_str(payload.get("error")),
             metadata=dict(payload.get("metadata") or {}),
+        )
+
+
+@dataclass
+class RuntimeEventEnvelope:
+    """Unified runtime event envelope for embodied event-driven execution."""
+
+    event_id: str
+    event_type: str
+    lifecycle: RuntimeEventLifecycle = RuntimeEventLifecycle.QUEUED
+    ts: float = field(default_factory=time.time)
+    trace_id: str = ""
+    source: str = ""
+    target: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_input_modality(
+        cls,
+        *,
+        event_id: str,
+        modality: str,
+        payload: Optional[Dict[str, Any]] = None,
+        source: str = "",
+        target: str = "brain",
+        trace_id: str = "",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> "RuntimeEventEnvelope":
+        mapping = {
+            "visual": RuntimeEventType.INPUT_VISUAL_PSEUDO.value,
+            "audio": RuntimeEventType.INPUT_AUDIO_PSEUDO.value,
+            "touch": RuntimeEventType.INPUT_TOUCH_PSEUDO.value,
+            "olfactory": RuntimeEventType.INPUT_OLFACTORY_PSEUDO.value,
+        }
+        normalized = str(modality or "").strip().lower()
+        if normalized not in mapping:
+            raise ValueError(f"unsupported input modality: {modality}")
+        return cls(
+            event_id=event_id,
+            event_type=mapping[normalized],
+            trace_id=trace_id,
+            source=source,
+            target=target,
+            payload=dict(payload or {}),
+            meta=dict(meta or {}),
+        )
+
+    @classmethod
+    def from_output_channel(
+        cls,
+        *,
+        event_id: str,
+        channel: str,
+        payload: Optional[Dict[str, Any]] = None,
+        source: str = "brain",
+        target: str = "",
+        trace_id: str = "",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> "RuntimeEventEnvelope":
+        mapping = {
+            "scene_action": RuntimeEventType.OUTPUT_SCENE_ACTION.value,
+            "dialog_utterance": RuntimeEventType.OUTPUT_DIALOG_UTTERANCE.value,
+            "interaction_feedback": RuntimeEventType.OUTPUT_INTERACTION_FEEDBACK.value,
+        }
+        normalized = str(channel or "").strip().lower()
+        if normalized not in mapping:
+            raise ValueError(f"unsupported output channel: {channel}")
+        return cls(
+            event_id=event_id,
+            event_type=mapping[normalized],
+            trace_id=trace_id,
+            source=source,
+            target=target,
+            payload=dict(payload or {}),
+            meta=dict(meta or {}),
         )
 
 

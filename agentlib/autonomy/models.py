@@ -49,6 +49,27 @@ class SubgoalState(str, Enum):
     SKIPPED = "SKIPPED"
 
 
+class EmbodiedLifecycle(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    DROPPED = "dropped"
+
+
+class EmbodiedEventType(str, Enum):
+    INPUT_VISUAL_PSEUDO = "input.visual.pseudo"
+    INPUT_AUDIO_PSEUDO = "input.audio.pseudo"
+    INPUT_TOUCH_PSEUDO = "input.touch.pseudo"
+    INPUT_OLFACTORY_PSEUDO = "input.olfactory.pseudo"
+    OUTPUT_SCENE_ACTION = "output.scene.action"
+    OUTPUT_DIALOG_UTTERANCE = "output.dialog.utterance"
+    OUTPUT_INTERACTION_FEEDBACK = "output.interaction.feedback"
+    INTERNAL_BRAIN_DECISION = "internal.brain.decision"
+    INTERNAL_STATE_UPDATED = "internal.state.updated"
+    INTERNAL_MEMORY_WRITE = "internal.memory.write"
+
+
 @dataclass
 class RetryPolicy:
     max_attempts: int = 2
@@ -100,3 +121,75 @@ class ReflectionRecord:
     next_task_hint: Optional[str] = None
     ts: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class EmbodiedEvent:
+    """Protocol draft: unified event model for autonomy runtime."""
+
+    event_id: str = field(default_factory=lambda: _new_id("evt"))
+    event_type: str = EmbodiedEventType.INTERNAL_BRAIN_DECISION.value
+    lifecycle: EmbodiedLifecycle = EmbodiedLifecycle.QUEUED
+    ts: float = field(default_factory=time.time)
+    trace_id: str = field(default_factory=lambda: _new_id("trace"))
+    source: str = ""
+    target: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
+    # Extension zone: keep optional, avoid algorithm lock-in in v0.
+    emotion: Optional[str] = None
+    uncertainty: Optional[float] = None
+    source_latency_ms: Optional[int] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_input_modality(
+        cls,
+        *,
+        modality: str,
+        payload: Optional[Dict[str, Any]] = None,
+        source: str = "",
+        target: str = "brain",
+        trace_id: Optional[str] = None,
+    ) -> "EmbodiedEvent":
+        mapping = {
+            "visual": EmbodiedEventType.INPUT_VISUAL_PSEUDO.value,
+            "audio": EmbodiedEventType.INPUT_AUDIO_PSEUDO.value,
+            "touch": EmbodiedEventType.INPUT_TOUCH_PSEUDO.value,
+            "olfactory": EmbodiedEventType.INPUT_OLFACTORY_PSEUDO.value,
+        }
+        normalized = str(modality or "").strip().lower()
+        if normalized not in mapping:
+            raise ValueError(f"unsupported input modality: {modality}")
+        return cls(
+            event_type=mapping[normalized],
+            trace_id=str(trace_id or _new_id("trace")),
+            source=source,
+            target=target,
+            payload=dict(payload or {}),
+        )
+
+    @classmethod
+    def from_output_channel(
+        cls,
+        *,
+        channel: str,
+        payload: Optional[Dict[str, Any]] = None,
+        source: str = "brain",
+        target: str = "",
+        trace_id: Optional[str] = None,
+    ) -> "EmbodiedEvent":
+        mapping = {
+            "scene_action": EmbodiedEventType.OUTPUT_SCENE_ACTION.value,
+            "dialog_utterance": EmbodiedEventType.OUTPUT_DIALOG_UTTERANCE.value,
+            "interaction_feedback": EmbodiedEventType.OUTPUT_INTERACTION_FEEDBACK.value,
+        }
+        normalized = str(channel or "").strip().lower()
+        if normalized not in mapping:
+            raise ValueError(f"unsupported output channel: {channel}")
+        return cls(
+            event_type=mapping[normalized],
+            trace_id=str(trace_id or _new_id("trace")),
+            source=source,
+            target=target,
+            payload=dict(payload or {}),
+        )

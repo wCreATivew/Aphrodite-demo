@@ -75,6 +75,26 @@ def test_tracing_write_failure_is_swallowed_in_runtime_step_recording(monkeypatc
     e._task_run_record_step(ts_start=1.0, ts_end=1.1, trace_events=[])
 
 
+def test_emit_reply_executes_three_actuation_channels_and_records_receipts(tmp_path, monkeypatch) -> None:
+    receipt_log = tmp_path / "actuation_receipts.jsonl"
+    monkeypatch.setenv("ACTUATION_RECEIPT_LOG_PATH", str(receipt_log))
+    e = RuntimeEngine()
+    e.speech_cfg.enabled_tts = False
+
+    e._emit_reply(msg_id=None, reply_text="hello world", idle_tag=False, structured=False)
+
+    assert receipt_log.exists()
+    rows = [json.loads(x) for x in receipt_log.read_text(encoding="utf-8").splitlines() if x.strip()]
+    channels = [str(r.get("channel") or "") for r in rows]
+    assert "dialogue" in channels
+    assert "interaction" in channels
+    assert "scene_effect" in channels
+    for row in rows:
+        assert "action_id" in row
+        assert "status" in row
+        assert "success" in row
+
+
 
 def test_retryable_error_retries_until_success() -> None:
     worker = _SequenceWorker(

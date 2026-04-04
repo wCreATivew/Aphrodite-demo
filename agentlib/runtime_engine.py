@@ -26,7 +26,9 @@ import threading
 import time
 import traceback
 import tokenize
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from agent_kernel.adapters import CodexCodeAdapter, GLM5PlannerAdapter
 from agent_kernel.compile_check import action_plan_gate_check
@@ -64,6 +66,7 @@ from .screen_capture import capture_screen_to_file
 from .semantic_intent_lane import SemanticIntentLane
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
+from .autonomy.actuation import ActionEnvelope, DialogueExecutor, InteractionExecutor, SceneEffectExecutor
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
 from .web_search import web_search
 
@@ -76,6 +79,28 @@ DEFAULT_RAG_KB = [
 ]
 
 REQUIRED_RUNTIME_TRIGGERS = ("code_debug",)
+
+
+@dataclass
+class PerceptionFusionPacket:
+    trace_id: str
+    event_id: str
+    user_text: str
+    msg_id: Optional[str]
+    is_idle: bool
+    ts: float = field(default_factory=time.time)
+    command_hint: str = ""
+    raw_event: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DecisionCoreResult:
+    trace_id: str
+    event_id: str
+    mode: str
+    action: str
+    reason: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
 
 
 class RuntimeEngine:
@@ -140,6 +165,12 @@ class RuntimeEngine:
         self.event_q: queue.Queue[Any] = queue.Queue()
         self.reply_q: queue.Queue[Any] = queue.Queue()
         self.stop_event = threading.Event()
+        self.dialogue_executor = DialogueExecutor(
+            text_sink=self._dialogue_text_sink,
+            voice_sink=self._dialogue_voice_subchannel,
+        )
+        self.interaction_executor = InteractionExecutor(action_sink=self._interaction_sink)
+        self.scene_effect_executor = SceneEffectExecutor(effect_sink=self._scene_effect_sink)
         self.history: List[Dict[str, str]] = []
 
         self.learned_lists = init_learned_lists("learned_lists.json")
@@ -453,6 +484,10 @@ class RuntimeEngine:
         self._selfdrive_api_audit_log_path = self._env_str(
             "SELFDRIVE_API_AUDIT_LOG_PATH", os.path.join("outputs", "selfdrive_api_audit.log")
         )
+        self._actuation_receipt_log_path = self._env_str(
+            "ACTUATION_RECEIPT_LOG_PATH", os.path.join("outputs", "actuation_receipts.jsonl")
+        )
+        self._actuation_trace_buffer: List[Dict[str, Any]] = []
         self._selfdrive_kernel = AgentKernel(
             planner=V15Planner(),
             worker=SpecialistRouterWorker(
@@ -536,6 +571,9 @@ class RuntimeEngine:
         )
 
     def start(self, with_db_bridge: bool = True, with_idle_watcher: bool = True) -> None:
+        # Protocol mapping note:
+        # Runtime startup is event-loop centric (threaded consumers + event queues).
+        # CLI/DB bridge/idle watcher are all producers for the same event bus.
         self._run_startup_codex_healthcheck_once()
         self._threads.append(
             start_metrics_thread(
@@ -574,6 +612,7 @@ class RuntimeEngine:
         save_state(self.cfg.state_path, self.state)
 
     def run_cli(self) -> int:
+        # CLI is an optional producer adapter, not the single runtime entrypoint.
         print("Aphrodite Runtime (GLM). Press Enter on empty input to exit.")
         print(f"RAG mode: {self.cfg.rag_mode}")
         while not self.stop_event.is_set():
@@ -1579,7 +1618,134 @@ class RuntimeEngine:
             return lead + "\n" + str(cycle)
         return lead
 
+    def _build_trace_context(self) -> Tuple[str, str]:
+        event_id = f"evt_{int(time.time() * 1000)}_{uuid4().hex[:6]}"
+        trace_id = f"{self.run_id}:{self.turn_index}:{event_id}"
+        return trace_id, event_id
+
+    def _perception_fusion(self, evt: Any, user_text: str, msg_id: Optional[str], is_idle: bool) -> PerceptionFusionPacket:
+        trace_id, event_id = self._build_trace_context()
+        command_hint = ""
+        txt = str(user_text or "").strip().lower()
+        if txt.startswith("/"):
+            command_hint = "slash_command"
+        elif any(k in txt for k in ("selfdrive", "自推进", "autofix", "debug", "selfcheck")):
+            command_hint = "runtime_control"
+        return PerceptionFusionPacket(
+            trace_id=trace_id,
+            event_id=event_id,
+            user_text=str(user_text or ""),
+            msg_id=msg_id,
+            is_idle=bool(is_idle),
+            command_hint=command_hint,
+            raw_event=dict(evt) if isinstance(evt, dict) else {"raw": str(evt)},
+        )
+
+    def _decision_core(self, perception: PerceptionFusionPacket) -> DecisionCoreResult:
+        if perception.is_idle:
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="chat",
+                action="respond_idle",
+                reason="idle_nudge",
+            )
+        text = str(perception.user_text or "")
+        if self._should_route_debug_command(text):
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="action",
+                action="debug_command",
+                reason="direct_debug_path",
+            )
+        if self._compile_selfdrive_control_dsl(text):
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="action",
+                action="selfdrive_control",
+                reason="dsl_control",
+            )
+        if self._looks_like_selfdrive_status_intent(text):
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="action",
+                action="selfdrive_status",
+                reason="status_query",
+            )
+        return DecisionCoreResult(
+            trace_id=perception.trace_id,
+            event_id=perception.event_id,
+            mode="chat",
+            action="llm_chat",
+            reason="default_chat",
+        )
+
+    def _action_planner(self, decision: DecisionCoreResult, perception: PerceptionFusionPacket) -> Optional[str]:
+        if decision.mode != "action":
+            return None
+        user_text = str(perception.user_text or "")
+        if decision.action == "debug_command":
+            action_task = KernelTask(
+                task_id=f"task_{decision.event_id}",
+                kind="debug_workflow",
+                description="run debug workflow command",
+                input_payload={"user_text": user_text, "trace_id": decision.trace_id, "event_id": decision.event_id},
+                retries=0,
+            )
+            subgoal = ExecutableSubgoal.from_task(action_task)
+            retry_policy = subgoal.retry_policy or RetryPolicy(max_attempts=2)
+            for _ in range(max(1, int(retry_policy.max_attempts))):
+                out = self._handle_debug_command(user_text)
+                if out:
+                    return str(out)
+            return None
+        if decision.action == "selfdrive_status":
+            return self._selfdrive_status_text()
+        if decision.action == "selfdrive_control":
+            action_task = KernelTask(
+                task_id=f"task_{decision.event_id}",
+                kind="selfdrive_control",
+                description="apply selfdrive control command",
+                input_payload={"command_text": user_text, "trace_id": decision.trace_id, "event_id": decision.event_id},
+                retries=0,
+            )
+            _ = ExecutableSubgoal.from_task(action_task)
+            return self._handle_natural_language_control(user_text)
+        return None
+
+    def _record_brain_tick(
+        self,
+        *,
+        trace_id: str,
+        event_id: str,
+        stage: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        pl = dict(payload or {})
+        pl["trace_id"] = str(trace_id)
+        pl["event_id"] = str(event_id)
+        pl["stage"] = str(stage)
+        self.mon["brain_last_stage"] = str(stage)
+        self.mon["brain_last_trace_id"] = str(trace_id)
+        self.mon["brain_last_event_id"] = str(event_id)
+        self.mon["brain_tick_count"] = int(self.mon.get("brain_tick_count", 0) or 0) + 1
+        self._log_activity(
+            tag="brain",
+            text=(
+                f"[brain_tick] stage={stage}; trace_id={trace_id}; event_id={event_id}; "
+                f"payload={json.dumps(pl, ensure_ascii=False, sort_keys=True)}"
+            ),
+            echo=False,
+        )
+
     def _brain_loop(self) -> None:
+        # Unified protocol mapping:
+        # perception  -> event_q.get(...) + _parse_event(...)
+        # decision    -> immediate_protocol / routing / policy / planning branches
+        # actuation   -> _emit_reply(...) -> reply_q (or bridge side effects)
         while not self.stop_event.is_set():
             try:
                 evt = self.event_q.get(timeout=0.2)
@@ -1591,8 +1757,33 @@ class RuntimeEngine:
                 break
 
             user_text, msg_id, is_idle = self._parse_event(evt)
+            # perception node: raw event -> normalized text/input shape
             if not user_text:
                 continue
+            perception = self._perception_fusion(evt=evt, user_text=user_text, msg_id=msg_id, is_idle=is_idle)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="perception_fusion",
+                payload={"command_hint": perception.command_hint, "is_idle": int(perception.is_idle)},
+            )
+            decision = self._decision_core(perception)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="decision_core",
+                payload={"mode": decision.mode, "action": decision.action, "reason": decision.reason},
+            )
+            self.mon["trace_id"] = perception.trace_id
+            self.mon["event_id"] = perception.event_id
+            self._log_activity(
+                tag="brain",
+                text=(
+                    f"[brain] trace_id={perception.trace_id}; event_id={perception.event_id}; "
+                    f"decision_mode={decision.mode}; decision_action={decision.action}; reason={decision.reason}"
+                ),
+                echo=False,
+            )
 
             if not is_idle:
                 self.turn_index += 1
@@ -1609,6 +1800,30 @@ class RuntimeEngine:
                 update_topic(self.state, user_text)
             self._update_reply_length_preferences(user_text=user_text, is_idle=is_idle)
 
+            action_output = self._action_planner(decision=decision, perception=perception)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="action_planner",
+                payload={"decision_mode": decision.mode, "planned_action": decision.action, "has_output": int(bool(action_output))},
+            )
+            if action_output:
+                self._record_brain_tick(
+                    trace_id=perception.trace_id,
+                    event_id=perception.event_id,
+                    stage="execution_receipt",
+                    payload={"executor": "runtime_action_planner", "ok": 1, "output_preview": str(action_output)[:120]},
+                )
+                self.history.append({"role": "assistant", "content": str(action_output)})
+                max_msgs = max(2, int(self.cfg.max_history_turns) * 2)
+                if len(self.history) > max_msgs:
+                    self.history = self.history[-max_msgs:]
+                self._emit_reply(msg_id=msg_id, reply_text=str(action_output), idle_tag=False, structured=True)
+                self._reply_turn_max_sentences = None
+                self._reply_turn_max_chars = None
+                save_state(self.cfg.state_path, self.state)
+                continue
+
             if not is_idle:
                 route_packet = self.immediate_protocol.send(
                     user_text=user_text,
@@ -1618,6 +1833,7 @@ class RuntimeEngine:
                     emit_reply=self._emit_reply,
                     mon=self.mon,
                 ).to_dict()
+                # decision node: classify/route user intent into immediate action
                 route_action = str(route_packet.get("action") or "CHAT").upper()
                 self.history.append({"role": "user", "content": user_text})
                 self.history.append({"role": "assistant", "content": str(route_packet.get("immediate") or "")})
@@ -1626,6 +1842,12 @@ class RuntimeEngine:
                     self.history = self.history[-max_msgs:]
 
                 if route_action in {"CHAT", "ASK_CLARIFY"}:
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "immediate_protocol", "ok": 1, "route_action": route_action},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1646,6 +1868,12 @@ class RuntimeEngine:
                     if len(self.history) > max_msgs:
                         self.history = self.history[-max_msgs:]
                     self._emit_reply(msg_id=msg_id, reply_text=str(direct_debug), idle_tag=False, structured=True)
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "direct_debug", "ok": 1, "output_preview": str(direct_debug)[:120]},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1658,6 +1886,12 @@ class RuntimeEngine:
                     if len(self.history) > max_msgs:
                         self.history = self.history[-max_msgs:]
                     self._emit_reply(msg_id=msg_id, reply_text=str(direct_video), idle_tag=False, structured=True)
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "video_summary", "ok": 1, "output_preview": str(direct_video)[:120]},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1670,6 +1904,12 @@ class RuntimeEngine:
                     if len(self.history) > max_msgs:
                         self.history = self.history[-max_msgs:]
                     self._emit_reply(msg_id=msg_id, reply_text=str(direct_control), idle_tag=False, structured=True)
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "nl_control", "ok": 1, "output_preview": str(direct_control)[:120]},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1812,6 +2052,12 @@ class RuntimeEngine:
                 pass
 
             self._emit_reply(msg_id=msg_id, reply_text=assistant_text, idle_tag=is_idle)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="execution_receipt",
+                payload={"executor": "glm_chat", "ok": 1, "latency_sec": round(float(dt), 3), "reply_len": len(assistant_text)},
+            )
             self._reply_turn_max_sentences = None
             self._reply_turn_max_chars = None
             save_state(self.cfg.state_path, self.state)
@@ -3431,10 +3677,20 @@ class RuntimeEngine:
         cur = self._task_run_current
         if cur is None:
             return
+        extra_trace = list(self._actuation_trace_buffer or [])
+        self._actuation_trace_buffer = []
+        merged_trace: List[Dict[str, Any]] = []
+        for item in list(trace_events or []):
+            if isinstance(item, dict):
+                merged_trace.append(dict(item))
+        for item in extra_trace:
+            if isinstance(item, dict):
+                merged_trace.append(dict(item))
         tool_calls: List[Dict[str, Any]] = []
         retry_actions: List[Dict[str, Any]] = []
         fallback_actions: List[Dict[str, Any]] = []
         output: Dict[str, Any] = {}
+        action_results: List[Dict[str, Any]] = []
         error = ""
         status = "ok"
         input_payload: Dict[str, Any] = {}
@@ -3468,7 +3724,7 @@ class RuntimeEngine:
             except Exception:
                 pass
 
-        for evt in list(trace_events or []):
+        for evt in merged_trace:
             if not isinstance(evt, dict):
                 continue
             ev = str(evt.get("event") or "")
@@ -3497,6 +3753,16 @@ class RuntimeEngine:
                     "selected_expert": str(evt.get("selected_expert") or ""),
                 }
                 error = str(evt.get("error") or "")
+            elif ev == "action_execution_result":
+                action_results.append(
+                    {
+                        "action_id": str(evt.get("action_id") or ""),
+                        "channel": str(evt.get("channel") or ""),
+                        "status": str(evt.get("status") or ""),
+                        "success": bool(evt.get("success")),
+                        "retry_reason": str(evt.get("retry_reason") or ""),
+                    }
+                )
             elif ev == "failure_routed" and not error:
                 error = str(evt.get("reason") or "")
             elif ev in {"retry_scheduled", "retry_exhausted"}:
@@ -3509,6 +3775,8 @@ class RuntimeEngine:
             output["retry_actions"] = retry_actions
         if fallback_actions:
             output["fallback_actions"] = fallback_actions
+        if action_results:
+            output["action_results"] = [dict(x) for x in action_results]
         step = TaskRunStep(
             step_id=f"s{len(cur.steps)+1:04d}",
             ts_start=float(ts_start),
@@ -3516,8 +3784,9 @@ class RuntimeEngine:
             duration_ms=int(max(0.0, (float(ts_end)-float(ts_start))) * 1000.0),
             input_payload=input_payload,
             tool_calls=tool_calls,
-            trace_events=[dict(x) for x in list(trace_events or []) if isinstance(x, dict)],
+            trace_events=[dict(x) for x in merged_trace if isinstance(x, dict)],
             output=output,
+            action_results=[dict(x) for x in action_results],
             error=error,
             status=status,
         )
@@ -4463,16 +4732,134 @@ class RuntimeEngine:
 
     def _emit_reply(self, msg_id: Optional[str], reply_text: str, idle_tag: bool, structured: bool = False) -> None:
         reply_text = self._finalize_reply_text(reply_text, structured=structured)
-        if not bool(structured):
-            self._synthesize_tts(reply_text)
+        envelope = ActionEnvelope.build(
+            channel="dialogue",
+            target="primary_chat",
+            payload={
+                "text": reply_text,
+                "msg_id": msg_id,
+                "idle_tag": bool(idle_tag),
+                "structured": bool(structured),
+                "voice_enabled": (not bool(structured)),
+            },
+            preconditions=[{"name": "non_empty_text", "ok": bool(reply_text)}],
+            timeout_s=2.8,
+            interruptible=True,
+            receipt_required=True,
+            priority="interaction_smoothness",
+        )
+        receipt = self._execute_actuation(
+            executor=self.dialogue_executor,
+            envelope=envelope,
+            source="emit_reply",
+        )
+        self._execute_interaction_action(
+            target="turn_delivery",
+            payload={"msg_id": msg_id or "", "idle_tag": bool(idle_tag), "structured": bool(structured)},
+            priority="interaction_smoothness",
+        )
+        self._execute_scene_effect_action(
+            target="avatar_expression",
+            payload={
+                "emotion": str(self.state.get("emotion") or ""),
+                "energy": int(self.state.get("energy", 60) or 60),
+                "affinity": int(self.state.get("affinity", 20) or 20),
+            },
+            priority="expressive_enrichment",
+        )
+        self.mon["last_dialogue_action_status"] = str(receipt.status)
+        self.mon["last_dialogue_action_id"] = str(receipt.action_id)
+        self.mon["last_dialogue_action_success"] = int(receipt.success)
+
+    def _execute_interaction_action(
+        self,
+        *,
+        target: str,
+        payload: Optional[Dict[str, Any]] = None,
+        priority: str = "interaction_smoothness",
+    ) -> Dict[str, Any]:
+        envelope = ActionEnvelope.build(
+            channel="interaction",
+            target=str(target or "interaction"),
+            payload=dict(payload or {}),
+            timeout_s=2.0,
+            interruptible=True,
+            receipt_required=True,
+            priority=str(priority or "interaction_smoothness"),
+        )
+        receipt = self._execute_actuation(executor=self.interaction_executor, envelope=envelope, source="interaction")
+        return dict(receipt.details or {})
+
+    def _execute_scene_effect_action(
+        self,
+        *,
+        target: str,
+        payload: Optional[Dict[str, Any]] = None,
+        priority: str = "expressive_enrichment",
+    ) -> Dict[str, Any]:
+        envelope = ActionEnvelope.build(
+            channel="scene_effect",
+            target=str(target or "scene"),
+            payload=dict(payload or {}),
+            timeout_s=1.5,
+            interruptible=True,
+            receipt_required=True,
+            priority=str(priority or "expressive_enrichment"),
+        )
+        receipt = self._execute_actuation(executor=self.scene_effect_executor, envelope=envelope, source="scene_effect")
+        return dict(receipt.details or {})
+
+    def _execute_actuation(self, *, executor: Any, envelope: ActionEnvelope, source: str) -> Any:
+        receipt = executor.execute(envelope)
+        evt = {
+            "event": "action_execution_result",
+            "ts": time.time(),
+            "source": str(source or ""),
+            "action_id": str(getattr(receipt, "action_id", "") or ""),
+            "channel": str(getattr(receipt, "channel", "") or envelope.channel),
+            "target": str(getattr(receipt, "target", "") or envelope.target),
+            "status": str(getattr(receipt, "status", "") or ""),
+            "success": bool(getattr(receipt, "success", False)),
+            "retry_reason": str(getattr(receipt, "retry_reason", "") or ""),
+            "started_at": float(getattr(receipt, "started_at", 0.0) or 0.0),
+            "ended_at": float(getattr(receipt, "ended_at", 0.0) or 0.0),
+            "priority": str(getattr(envelope, "priority", "") or ""),
+            "interruptible": int(bool(getattr(envelope, "interruptible", True))),
+            "details": dict(getattr(receipt, "details", {}) or {}),
+        }
+        self._append_jsonl(self._actuation_receipt_log_path, evt)
+        self._actuation_trace_buffer.append(dict(evt))
+        self.mon["actuation_last_channel"] = str(evt.get("channel") or "")
+        self.mon["actuation_last_status"] = str(evt.get("status") or "")
+        self.mon["actuation_last_success"] = int(bool(evt.get("success")))
+        self.mon["actuation_receipt_count"] = int(self.mon.get("actuation_receipt_count", 0) or 0) + 1
+        return receipt
+
+    def _dialogue_text_sink(self, text: str, payload: Dict[str, Any]) -> None:
+        msg_id = str(payload.get("msg_id") or "").strip() or None
+        idle_tag = bool(payload.get("idle_tag"))
         if msg_id:
-            db_write_outbox(self.cfg.db_path, msg_id, reply_text)
+            db_write_outbox(self.cfg.db_path, msg_id, text)
             db_set_inbox_status(self.cfg.db_path, msg_id, "done")
-            self.reply_q.put({"msg_id": msg_id, "reply": reply_text})
+            self.reply_q.put({"msg_id": msg_id, "reply": text})
             return
         if idle_tag:
-            db_write_system_pair(self.cfg.db_path, reply_text, tag="idle")
-        self.reply_q.put(reply_text)
+            db_write_system_pair(self.cfg.db_path, text, tag="idle")
+        self.reply_q.put(text)
+
+    @staticmethod
+    def _scene_effect_sink(payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Placeholder hook for live2d / animation / VFX.
+        return {"ok": True, "scene_effect": "noop", "payload_keys": sorted([str(k) for k in payload.keys()])}
+
+    @staticmethod
+    def _interaction_sink(payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "interaction": "handled",
+            "target": str(payload.get("target") or ""),
+            "payload_keys": sorted([str(k) for k in dict(payload.get("payload") or {}).keys()]),
+        }
 
     def _active_reply_limits(self) -> tuple[int, int]:
         max_sentences = int(self.reply_max_sentences)
@@ -4723,12 +5110,12 @@ class RuntimeEngine:
             head = head + "?"
         return head
 
-    def _synthesize_tts(self, reply_text: str) -> None:
+    def _dialogue_voice_subchannel(self, reply_text: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.speech_cfg.enabled_tts:
-            return
+            return {"ok": False, "reason": "tts_disabled"}
         t = str(reply_text or "").strip()
         if not t:
-            return
+            return {"ok": False, "reason": "empty_text"}
         prosody = ssml_prosody_from_state(
             emotion=str(self.state.get("emotion") or ""),
             energy=int(self.state.get("energy", 60) or 60),
@@ -4749,10 +5136,12 @@ class RuntimeEngine:
                 p = save_wav(out.get("audio") or b"", self.speech_cfg.tts_save_path)
                 self.state["last_tts_path"] = p
                 self.mon["tts_ok"] = int(self.mon.get("tts_ok", 0) or 0) + 1
-            else:
-                self.mon["tts_fail"] = int(self.mon.get("tts_fail", 0) or 0) + 1
-        except Exception:
+                return {"ok": True, "path": p}
             self.mon["tts_fail"] = int(self.mon.get("tts_fail", 0) or 0) + 1
+            return {"ok": False, "error": str(out.get("error") or "tts_failed")}
+        except Exception as e:
+            self.mon["tts_fail"] = int(self.mon.get("tts_fail", 0) or 0) + 1
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     def _parse_event(self, evt: Any) -> tuple[str, Optional[str], bool]:
         msg_id = None
@@ -4777,6 +5166,7 @@ class RuntimeEngine:
         return user_text, str(msg_id) if msg_id else None, is_idle
 
     def _mouth_loop(self) -> None:
+        # actuation node: materialize reply events to concrete output sink (stdout/UI bridge)
         while not self.stop_event.is_set():
             try:
                 reply = self.reply_q.get(timeout=0.2)

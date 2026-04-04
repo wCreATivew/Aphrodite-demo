@@ -24,6 +24,7 @@ class StepLog:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     trace_events: List[Dict[str, Any]] = field(default_factory=list)
     output: Dict[str, Any] = field(default_factory=dict)
+    action_results: List[Dict[str, Any]] = field(default_factory=list)
     error: str = ""
     status: str = "ok"
 
@@ -167,6 +168,7 @@ def _normalize_step_rows(steps: List[TaskRunStep]) -> List[Dict[str, Any]]:
                 "error": str(step.error or ""),
                 "tool_calls": tool_names,
                 "output": dict(step.output or {}),
+                "action_results": [dict(x) for x in list(step.action_results or []) if isinstance(x, dict)],
             }
         )
     return rows
