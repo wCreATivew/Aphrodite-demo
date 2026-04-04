@@ -100,3 +100,45 @@ class ReflectionRecord:
     next_task_hint: Optional[str] = None
     ts: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ActuatorCapability:
+    name: str
+    description: str
+    command: str
+    required_params: List[str] = field(default_factory=list)
+    optional_params: List[str] = field(default_factory=list)
+    supports_rollback: bool = False
+
+
+@dataclass
+class MotorCommand:
+    command: str
+    params: Dict[str, Any] = field(default_factory=dict)
+    command_id: str = field(default_factory=lambda: _new_id("motor"))
+    idempotency_key: str = ""
+    rollback_on_failure: bool = True
+
+
+@dataclass
+class ShellState:
+    shell_id: str
+    status: str
+    pose: Dict[str, Any] = field(default_factory=dict)
+    held_object: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MotorCommandResult:
+    code: int
+    success: bool
+    execution: Optional[ExecutionRecord] = None
+    error: str = ""
+
+
+MOTOR_CODE_OK = 0
+MOTOR_CODE_FAILED = 1
+MOTOR_CODE_ACTION_NOT_FOUND = 2
+MOTOR_CODE_COMMAND_MISMATCH = 3
