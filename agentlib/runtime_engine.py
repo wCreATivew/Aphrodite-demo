@@ -26,7 +26,9 @@ import threading
 import time
 import traceback
 import tokenize
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from agent_kernel.adapters import CodexCodeAdapter, GLM5PlannerAdapter
 from agent_kernel.compile_check import action_plan_gate_check
@@ -76,6 +78,28 @@ DEFAULT_RAG_KB = [
 ]
 
 REQUIRED_RUNTIME_TRIGGERS = ("code_debug",)
+
+
+@dataclass
+class PerceptionFusionPacket:
+    trace_id: str
+    event_id: str
+    user_text: str
+    msg_id: Optional[str]
+    is_idle: bool
+    ts: float = field(default_factory=time.time)
+    command_hint: str = ""
+    raw_event: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DecisionCoreResult:
+    trace_id: str
+    event_id: str
+    mode: str
+    action: str
+    reason: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
 
 
 class RuntimeEngine:
@@ -1579,6 +1603,129 @@ class RuntimeEngine:
             return lead + "\n" + str(cycle)
         return lead
 
+    def _build_trace_context(self) -> Tuple[str, str]:
+        event_id = f"evt_{int(time.time() * 1000)}_{uuid4().hex[:6]}"
+        trace_id = f"{self.run_id}:{self.turn_index}:{event_id}"
+        return trace_id, event_id
+
+    def _perception_fusion(self, evt: Any, user_text: str, msg_id: Optional[str], is_idle: bool) -> PerceptionFusionPacket:
+        trace_id, event_id = self._build_trace_context()
+        command_hint = ""
+        txt = str(user_text or "").strip().lower()
+        if txt.startswith("/"):
+            command_hint = "slash_command"
+        elif any(k in txt for k in ("selfdrive", "自推进", "autofix", "debug", "selfcheck")):
+            command_hint = "runtime_control"
+        return PerceptionFusionPacket(
+            trace_id=trace_id,
+            event_id=event_id,
+            user_text=str(user_text or ""),
+            msg_id=msg_id,
+            is_idle=bool(is_idle),
+            command_hint=command_hint,
+            raw_event=dict(evt) if isinstance(evt, dict) else {"raw": str(evt)},
+        )
+
+    def _decision_core(self, perception: PerceptionFusionPacket) -> DecisionCoreResult:
+        if perception.is_idle:
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="chat",
+                action="respond_idle",
+                reason="idle_nudge",
+            )
+        text = str(perception.user_text or "")
+        if self._should_route_debug_command(text):
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="action",
+                action="debug_command",
+                reason="direct_debug_path",
+            )
+        if self._compile_selfdrive_control_dsl(text):
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="action",
+                action="selfdrive_control",
+                reason="dsl_control",
+            )
+        if self._looks_like_selfdrive_status_intent(text):
+            return DecisionCoreResult(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                mode="action",
+                action="selfdrive_status",
+                reason="status_query",
+            )
+        return DecisionCoreResult(
+            trace_id=perception.trace_id,
+            event_id=perception.event_id,
+            mode="chat",
+            action="llm_chat",
+            reason="default_chat",
+        )
+
+    def _action_planner(self, decision: DecisionCoreResult, perception: PerceptionFusionPacket) -> Optional[str]:
+        if decision.mode != "action":
+            return None
+        user_text = str(perception.user_text or "")
+        if decision.action == "debug_command":
+            action_task = KernelTask(
+                task_id=f"task_{decision.event_id}",
+                kind="debug_workflow",
+                description="run debug workflow command",
+                input_payload={"user_text": user_text, "trace_id": decision.trace_id, "event_id": decision.event_id},
+                retries=0,
+            )
+            subgoal = ExecutableSubgoal.from_task(action_task)
+            retry_policy = subgoal.retry_policy or RetryPolicy(max_attempts=2)
+            for _ in range(max(1, int(retry_policy.max_attempts))):
+                out = self._handle_debug_command(user_text)
+                if out:
+                    return str(out)
+            return None
+        if decision.action == "selfdrive_status":
+            return self._selfdrive_status_text()
+        if decision.action == "selfdrive_control":
+            action_task = KernelTask(
+                task_id=f"task_{decision.event_id}",
+                kind="selfdrive_control",
+                description="apply selfdrive control command",
+                input_payload={"command_text": user_text, "trace_id": decision.trace_id, "event_id": decision.event_id},
+                retries=0,
+            )
+            _ = ExecutableSubgoal.from_task(action_task)
+            return self._handle_natural_language_control(user_text)
+        return None
+
+    def _record_brain_tick(
+        self,
+        *,
+        trace_id: str,
+        event_id: str,
+        stage: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        pl = dict(payload or {})
+        pl["trace_id"] = str(trace_id)
+        pl["event_id"] = str(event_id)
+        pl["stage"] = str(stage)
+        self.mon["brain_last_stage"] = str(stage)
+        self.mon["brain_last_trace_id"] = str(trace_id)
+        self.mon["brain_last_event_id"] = str(event_id)
+        self.mon["brain_tick_count"] = int(self.mon.get("brain_tick_count", 0) or 0) + 1
+        self._log_activity(
+            tag="brain",
+            text=(
+                f"[brain_tick] stage={stage}; trace_id={trace_id}; event_id={event_id}; "
+                f"payload={json.dumps(pl, ensure_ascii=False, sort_keys=True)}"
+            ),
+            echo=False,
+        )
+
     def _brain_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
@@ -1593,6 +1740,30 @@ class RuntimeEngine:
             user_text, msg_id, is_idle = self._parse_event(evt)
             if not user_text:
                 continue
+            perception = self._perception_fusion(evt=evt, user_text=user_text, msg_id=msg_id, is_idle=is_idle)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="perception_fusion",
+                payload={"command_hint": perception.command_hint, "is_idle": int(perception.is_idle)},
+            )
+            decision = self._decision_core(perception)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="decision_core",
+                payload={"mode": decision.mode, "action": decision.action, "reason": decision.reason},
+            )
+            self.mon["trace_id"] = perception.trace_id
+            self.mon["event_id"] = perception.event_id
+            self._log_activity(
+                tag="brain",
+                text=(
+                    f"[brain] trace_id={perception.trace_id}; event_id={perception.event_id}; "
+                    f"decision_mode={decision.mode}; decision_action={decision.action}; reason={decision.reason}"
+                ),
+                echo=False,
+            )
 
             if not is_idle:
                 self.turn_index += 1
@@ -1608,6 +1779,30 @@ class RuntimeEngine:
                 mark_user_turn(self.state)
                 update_topic(self.state, user_text)
             self._update_reply_length_preferences(user_text=user_text, is_idle=is_idle)
+
+            action_output = self._action_planner(decision=decision, perception=perception)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="action_planner",
+                payload={"decision_mode": decision.mode, "planned_action": decision.action, "has_output": int(bool(action_output))},
+            )
+            if action_output:
+                self._record_brain_tick(
+                    trace_id=perception.trace_id,
+                    event_id=perception.event_id,
+                    stage="execution_receipt",
+                    payload={"executor": "runtime_action_planner", "ok": 1, "output_preview": str(action_output)[:120]},
+                )
+                self.history.append({"role": "assistant", "content": str(action_output)})
+                max_msgs = max(2, int(self.cfg.max_history_turns) * 2)
+                if len(self.history) > max_msgs:
+                    self.history = self.history[-max_msgs:]
+                self._emit_reply(msg_id=msg_id, reply_text=str(action_output), idle_tag=False, structured=True)
+                self._reply_turn_max_sentences = None
+                self._reply_turn_max_chars = None
+                save_state(self.cfg.state_path, self.state)
+                continue
 
             if not is_idle:
                 route_packet = self.immediate_protocol.send(
@@ -1626,6 +1821,12 @@ class RuntimeEngine:
                     self.history = self.history[-max_msgs:]
 
                 if route_action in {"CHAT", "ASK_CLARIFY"}:
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "immediate_protocol", "ok": 1, "route_action": route_action},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1646,6 +1847,12 @@ class RuntimeEngine:
                     if len(self.history) > max_msgs:
                         self.history = self.history[-max_msgs:]
                     self._emit_reply(msg_id=msg_id, reply_text=str(direct_debug), idle_tag=False, structured=True)
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "direct_debug", "ok": 1, "output_preview": str(direct_debug)[:120]},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1658,6 +1865,12 @@ class RuntimeEngine:
                     if len(self.history) > max_msgs:
                         self.history = self.history[-max_msgs:]
                     self._emit_reply(msg_id=msg_id, reply_text=str(direct_video), idle_tag=False, structured=True)
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "video_summary", "ok": 1, "output_preview": str(direct_video)[:120]},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1670,6 +1883,12 @@ class RuntimeEngine:
                     if len(self.history) > max_msgs:
                         self.history = self.history[-max_msgs:]
                     self._emit_reply(msg_id=msg_id, reply_text=str(direct_control), idle_tag=False, structured=True)
+                    self._record_brain_tick(
+                        trace_id=perception.trace_id,
+                        event_id=perception.event_id,
+                        stage="execution_receipt",
+                        payload={"executor": "nl_control", "ok": 1, "output_preview": str(direct_control)[:120]},
+                    )
                     self._reply_turn_max_sentences = None
                     self._reply_turn_max_chars = None
                     save_state(self.cfg.state_path, self.state)
@@ -1812,6 +2031,12 @@ class RuntimeEngine:
                 pass
 
             self._emit_reply(msg_id=msg_id, reply_text=assistant_text, idle_tag=is_idle)
+            self._record_brain_tick(
+                trace_id=perception.trace_id,
+                event_id=perception.event_id,
+                stage="execution_receipt",
+                payload={"executor": "glm_chat", "ok": 1, "latency_sec": round(float(dt), 3), "reply_len": len(assistant_text)},
+            )
             self._reply_turn_max_sentences = None
             self._reply_turn_max_chars = None
             save_state(self.cfg.state_path, self.state)

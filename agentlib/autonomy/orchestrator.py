@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agent_kernel.circuit_breaker import CircuitBreaker
 from agent_kernel.compile_check import plan_compile_check
@@ -10,7 +10,7 @@ from agent_kernel.local_replan import action_fingerprint
 from agent_kernel.schemas import ExecutableSubgoal, RetryPolicy
 
 from .interfaces import Evaluator, Executor, Planner, Reflector, ToolRegistry
-from .models import Goal, ReflectionRecord
+from .models import Goal, ReflectionRecord, Task
 from .state import AgentState
 from .store import InMemoryStateStore
 from .tracing import TraceEvent, TraceHook
@@ -27,6 +27,7 @@ class Orchestrator:
         tools: ToolRegistry,
         store: Optional[InMemoryStateStore] = None,
         trace_hooks: Optional[List[TraceHook]] = None,
+        emotion_state_provider: Optional[Callable[[InMemoryStateStore], Dict[str, Any]]] = None,
     ) -> None:
         self.planner = planner
         self.executor = executor
@@ -35,6 +36,7 @@ class Orchestrator:
         self.tools = tools
         self.store = store or InMemoryStateStore()
         self.trace_hooks = list(trace_hooks or [])
+        self.emotion_state_provider = emotion_state_provider
         self.circuit_breaker = CircuitBreaker(
             same_error_limit=2,
             same_action_replan_limit=3,
@@ -56,6 +58,33 @@ class Orchestrator:
         self.store.add_trace(evt)
         for hook in self.trace_hooks:
             hook(evt)
+
+    def _read_perception(self, goal: Goal, cycle: int) -> Dict[str, Any]:
+        emotion_state: Dict[str, Any] = {}
+        if callable(self.emotion_state_provider):
+            try:
+                emotion_state = dict(self.emotion_state_provider(self.store) or {})
+            except Exception as ex:
+                self._trace("emotion", "emotion provider failed", {"error": str(ex)})
+                emotion_state = {}
+        perception = {"goal_id": goal.id, "cycle": int(cycle), "emotion_state": emotion_state}
+        self._trace("perception", "perception fused", {"goal_id": goal.id, "cycle": cycle, "emotion": emotion_state})
+        return perception
+
+    def _update_state_from_perception(self, perception: Dict[str, Any]) -> None:
+        emotion_state = dict(perception.get("emotion_state") or {})
+        if emotion_state:
+            self._trace("state", "emotion state merged", {"emotion_keys": sorted(emotion_state.keys())})
+
+    def tick(self, goal: Goal, cycle: int) -> Optional[Task]:
+        perception = self._read_perception(goal=goal, cycle=cycle)
+        self._update_state_from_perception(perception)
+        task = self.store.next_pending_task(goal.id)
+        if task is None:
+            self._trace("action_planner", "no pending task", {"goal_id": goal.id, "cycle": cycle})
+            return None
+        self._trace("action_planner", "next action selected", {"task_id": task.id, "cycle": cycle})
+        return task
 
     def run_goal(self, goal: Goal, max_cycles: int = 30) -> Dict[str, int]:
         self.store.add_goal(goal)
@@ -94,7 +123,7 @@ class Orchestrator:
             for issue in compile_issues:
                 issues_by_task.setdefault(str(issue.subgoal_id), []).append(str(issue.code))
 
-            task = self.store.next_pending_task(goal.id)
+            task = self.tick(goal=goal, cycle=cycles)
             if task is None:
                 terminal = [t for t in self.store.list_tasks(goal.id) if t.status in {"done", "failed", "blocked"}]
                 has_done = any(t.status == "done" for t in terminal)
