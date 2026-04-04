@@ -11,6 +11,7 @@ from agent_kernel.schemas import ExecutableSubgoal, RetryPolicy
 
 from .interfaces import Evaluator, Executor, Planner, Reflector, ToolRegistry
 from .models import Goal, ReflectionRecord
+from .perception import AudioAdapter, OlfactoryAdapter, PerceptionFusionEngine, TactileAdapter, VisionAdapter
 from .state import AgentState
 from .store import InMemoryStateStore
 from .tracing import TraceEvent, TraceHook
@@ -27,6 +28,7 @@ class Orchestrator:
         tools: ToolRegistry,
         store: Optional[InMemoryStateStore] = None,
         trace_hooks: Optional[List[TraceHook]] = None,
+        perception_fusion: Optional[PerceptionFusionEngine] = None,
     ) -> None:
         self.planner = planner
         self.executor = executor
@@ -35,6 +37,9 @@ class Orchestrator:
         self.tools = tools
         self.store = store or InMemoryStateStore()
         self.trace_hooks = list(trace_hooks or [])
+        self.perception_fusion = perception_fusion or PerceptionFusionEngine()
+        self._adapters = [VisionAdapter(), AudioAdapter(), TactileAdapter(), OlfactoryAdapter()]
+
         self.circuit_breaker = CircuitBreaker(
             same_error_limit=2,
             same_action_replan_limit=3,
@@ -79,6 +84,18 @@ class Orchestrator:
                 self.store.set_state(AgentState.PAUSED)
                 self._trace("control", "paused")
                 break
+
+            perception_snapshot = self._run_perception_cycle()
+            self.store.set_latest_perception(perception_snapshot)
+            self._trace(
+                "perception",
+                "fusion completed",
+                {
+                    "aligned_events": len(perception_snapshot.get("aligned_events", [])),
+                    "conflicts": len(perception_snapshot.get("conflicts", [])),
+                    "degraded": int(bool(perception_snapshot.get("degraded"))),
+                },
+            )
 
             stagnation = self.circuit_breaker.check_stagnation(cycle=cycles, now_ts=time.time())
             if stagnation.triggered:
@@ -219,6 +236,22 @@ class Orchestrator:
         done = len([t for t in self.store.list_tasks(goal.id) if t.status == "done"])
         failed = len([t for t in self.store.list_tasks(goal.id) if t.status in {"failed", "blocked"}])
         return {"cycles": cycles, "done": done, "failed": failed, "traces": len(self.store.traces)}
+
+    def _run_perception_cycle(self) -> Dict[str, object]:
+        frames = []
+        for adapter in self._adapters:
+            try:
+                frame = adapter.read()
+            except Exception as exc:
+                self._trace(
+                    "perception",
+                    "adapter read failed",
+                    {"modality": getattr(adapter, "modality", "unknown"), "error": str(exc)},
+                )
+                continue
+            if frame:
+                frames.append(frame)
+        return self.perception_fusion.run_cycle(frames)
 
     @staticmethod
     def _to_subgoal(task) -> ExecutableSubgoal:
