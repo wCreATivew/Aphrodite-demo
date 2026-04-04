@@ -14,14 +14,19 @@ from .models import (
     Task,
 )
 from .orchestrator import Orchestrator
-from .shell_adapters import MockShellAdapter
-from .state import AgentState
-from .store import InMemoryStateStore
+from .scene_runtime import SceneRuntime
+from .state import AgentState, SceneDelta, SceneState
+from .store import InMemoryStateStore, ScenePerception, SceneSnapshot
 from .tool_registry import InMemoryToolRegistry
 from .tracing import TraceEvent, TraceHook, console_trace_hook
 
 __all__ = [
     "AgentState",
+    "SceneState",
+    "SceneDelta",
+    "SceneSnapshot",
+    "ScenePerception",
+    "SceneRuntime",
     "Goal",
     "Task",
     "ExecutionRecord",
