@@ -54,6 +54,7 @@ class InMemoryStateStore:
     last_done_cycle: int = 0
     pause_requested: bool = False
     stop_requested: bool = False
+    latest_perception: Dict[str, object] = field(default_factory=dict)
 
     def add_goal(self, goal: Goal) -> None:
         self.goals[goal.id] = goal
@@ -154,6 +155,9 @@ class InMemoryStateStore:
 
     def set_state(self, state: AgentState) -> None:
         self.state = state
+
+    def set_latest_perception(self, snapshot: Dict[str, object]) -> None:
+        self.latest_perception = dict(snapshot or {})
 
     def mark_done_progress(self, cycle: int, ts: float) -> None:
         self.last_done_cycle = max(int(self.last_done_cycle), int(cycle))
