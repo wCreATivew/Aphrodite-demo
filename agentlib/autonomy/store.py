@@ -1,12 +1,42 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .models import ExecutionRecord, Goal, ReflectionRecord, Task
-from .state import AgentState
+from .scene_runtime import SceneRuntime
+from .state import AgentState, SceneDelta, SceneInteractionOutcome, SceneState
 from .tracing import TraceEvent
 
+
+@dataclass
+class SceneSnapshot:
+    """Minimal replayable scene persistence payload."""
+
+    version: str
+    scene_id: str
+    tick: int
+    objects: Dict[str, Dict[str, Any]]
+    positions: Dict[str, str]
+    interactable_points: Dict[str, Dict[str, Any]]
+    environment: Dict[str, Any]
+    interaction_rules: List[Dict[str, Any]]
+    last_delta: Optional[Dict[str, Any]] = None
+
+
+
+
+@dataclass
+class ScenePerception:
+    """Actor-facing scene view used as next-step perception input."""
+
+    actor: str
+    tick: int
+    objects: Dict[str, Dict[str, Any]]
+    positions: Dict[str, str]
+    interactable_points: Dict[str, Dict[str, Any]]
+    environment: Dict[str, Any]
+    recent_deltas: List[Dict[str, Any]] = field(default_factory=list)
 
 @dataclass
 class InMemoryStateStore:
@@ -18,6 +48,8 @@ class InMemoryStateStore:
     traces: List[TraceEvent] = field(default_factory=list)
     failure_fingerprints: List[str] = field(default_factory=list)
     replan_actions: List[str] = field(default_factory=list)
+    scene: SceneState = field(default_factory=SceneState)
+    scene_deltas: List[SceneDelta] = field(default_factory=list)
     last_done_ts: float = 0.0
     last_done_cycle: int = 0
     pause_requested: bool = False
@@ -48,9 +80,134 @@ class InMemoryStateStore:
     def add_trace(self, evt: TraceEvent) -> None:
         self.traces.append(evt)
 
+    def add_scene_delta(self, delta: SceneDelta) -> None:
+        self.scene_deltas.append(delta)
+
+    def apply_scene_action(
+        self,
+        *,
+        actor: str,
+        action: str,
+        point_id: str,
+        object_updates: Optional[Dict[str, Dict[str, Any]]] = None,
+        env_updates: Optional[Dict[str, Any]] = None,
+        position_updates: Optional[Dict[str, str]] = None,
+    ) -> Tuple[SceneInteractionOutcome, SceneDelta]:
+        runtime = SceneRuntime(self.scene)
+        outcome, delta = runtime.apply_action(
+            actor=actor,
+            action=action,
+            point_id=point_id,
+            object_updates=object_updates,
+            env_updates=env_updates,
+            position_updates=position_updates,
+        )
+        self.scene = runtime.state
+        self.add_scene_delta(delta)
+        return outcome, delta
+
+    def update_scene_environment(self, updates: Dict[str, Any]) -> SceneDelta:
+        runtime = SceneRuntime(self.scene)
+        delta = runtime.update_environment(updates)
+        self.scene = runtime.state
+        self.add_scene_delta(delta)
+        return delta
+
+    def get_scene_perception(self, *, actor: str, recent_delta_limit: int = 5) -> ScenePerception:
+        recent = self.scene_deltas[-max(0, int(recent_delta_limit)) :] if recent_delta_limit else []
+        return ScenePerception(
+            actor=str(actor or "agent"),
+            tick=int(self.scene.tick),
+            objects={
+                obj_id: {
+                    "object_type": obj.object_type,
+                    "status": obj.status,
+                    "attrs": dict(obj.attrs),
+                }
+                for obj_id, obj in self.scene.objects.items()
+            },
+            positions={k: str(v) for k, v in self.scene.positions.items()},
+            interactable_points={
+                point_id: {
+                    "object_id": point.object_id,
+                    "action": point.action,
+                    "enabled": bool(point.enabled),
+                    "constraints": dict(point.constraints),
+                }
+                for point_id, point in self.scene.interactable_points.items()
+            },
+            environment=dict(self.scene.environment),
+            recent_deltas=[
+                {
+                    "tick": d.tick,
+                    "actor": d.actor,
+                    "action": d.action,
+                    "point_id": d.point_id,
+                    "object_updates": dict(d.object_updates),
+                    "position_updates": dict(d.position_updates),
+                    "env_updates": dict(d.env_updates),
+                    "side_effects": list(d.side_effects),
+                }
+                for d in recent
+            ],
+        )
+
     def set_state(self, state: AgentState) -> None:
         self.state = state
 
     def mark_done_progress(self, cycle: int, ts: float) -> None:
         self.last_done_cycle = max(int(self.last_done_cycle), int(cycle))
         self.last_done_ts = max(float(self.last_done_ts), float(ts))
+
+    def build_scene_snapshot(self) -> SceneSnapshot:
+        last_delta = None
+        if self.scene_deltas:
+            d = self.scene_deltas[-1]
+            last_delta = {
+                "tick": d.tick,
+                "actor": d.actor,
+                "action": d.action,
+                "point_id": d.point_id,
+                "object_updates": dict(d.object_updates),
+                "position_updates": dict(d.position_updates),
+                "env_updates": dict(d.env_updates),
+                "side_effects": list(d.side_effects),
+            }
+
+        return SceneSnapshot(
+            version="scene_snapshot.v1",
+            scene_id=str(self.scene.scene_id),
+            tick=int(self.scene.tick),
+            objects={
+                obj_id: {
+                    "object_id": obj.object_id,
+                    "object_type": obj.object_type,
+                    "status": obj.status,
+                    "attrs": dict(obj.attrs),
+                }
+                for obj_id, obj in self.scene.objects.items()
+            },
+            positions={k: str(v) for k, v in self.scene.positions.items()},
+            interactable_points={
+                point_id: {
+                    "point_id": point.point_id,
+                    "object_id": point.object_id,
+                    "action": point.action,
+                    "enabled": bool(point.enabled),
+                    "constraints": dict(point.constraints),
+                }
+                for point_id, point in self.scene.interactable_points.items()
+            },
+            environment=dict(self.scene.environment),
+            interaction_rules=[
+                {
+                    "rule_id": r.rule_id,
+                    "action": r.action,
+                    "point_id": r.point_id,
+                    "actor_whitelist": list(r.actor_whitelist),
+                    "required_env": dict(r.required_env),
+                }
+                for r in self.scene.interaction_rules
+            ],
+            last_delta=last_delta,
+        )
