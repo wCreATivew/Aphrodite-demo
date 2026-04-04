@@ -64,6 +64,7 @@ from .screen_capture import capture_screen_to_file
 from .semantic_intent_lane import SemanticIntentLane
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
+from .autonomy.actuation import ActionEnvelope, DialogueExecutor, InteractionExecutor, SceneEffectExecutor
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
 from .web_search import web_search
 
@@ -140,6 +141,12 @@ class RuntimeEngine:
         self.event_q: queue.Queue[Any] = queue.Queue()
         self.reply_q: queue.Queue[Any] = queue.Queue()
         self.stop_event = threading.Event()
+        self.dialogue_executor = DialogueExecutor(
+            text_sink=self._dialogue_text_sink,
+            voice_sink=self._dialogue_voice_subchannel,
+        )
+        self.interaction_executor = InteractionExecutor(action_sink=self._interaction_sink)
+        self.scene_effect_executor = SceneEffectExecutor(effect_sink=self._scene_effect_sink)
         self.history: List[Dict[str, str]] = []
 
         self.learned_lists = init_learned_lists("learned_lists.json")
@@ -453,6 +460,10 @@ class RuntimeEngine:
         self._selfdrive_api_audit_log_path = self._env_str(
             "SELFDRIVE_API_AUDIT_LOG_PATH", os.path.join("outputs", "selfdrive_api_audit.log")
         )
+        self._actuation_receipt_log_path = self._env_str(
+            "ACTUATION_RECEIPT_LOG_PATH", os.path.join("outputs", "actuation_receipts.jsonl")
+        )
+        self._actuation_trace_buffer: List[Dict[str, Any]] = []
         self._selfdrive_kernel = AgentKernel(
             planner=V15Planner(),
             worker=SpecialistRouterWorker(
@@ -3431,10 +3442,20 @@ class RuntimeEngine:
         cur = self._task_run_current
         if cur is None:
             return
+        extra_trace = list(self._actuation_trace_buffer or [])
+        self._actuation_trace_buffer = []
+        merged_trace: List[Dict[str, Any]] = []
+        for item in list(trace_events or []):
+            if isinstance(item, dict):
+                merged_trace.append(dict(item))
+        for item in extra_trace:
+            if isinstance(item, dict):
+                merged_trace.append(dict(item))
         tool_calls: List[Dict[str, Any]] = []
         retry_actions: List[Dict[str, Any]] = []
         fallback_actions: List[Dict[str, Any]] = []
         output: Dict[str, Any] = {}
+        action_results: List[Dict[str, Any]] = []
         error = ""
         status = "ok"
         input_payload: Dict[str, Any] = {}
@@ -3468,7 +3489,7 @@ class RuntimeEngine:
             except Exception:
                 pass
 
-        for evt in list(trace_events or []):
+        for evt in merged_trace:
             if not isinstance(evt, dict):
                 continue
             ev = str(evt.get("event") or "")
@@ -3497,6 +3518,16 @@ class RuntimeEngine:
                     "selected_expert": str(evt.get("selected_expert") or ""),
                 }
                 error = str(evt.get("error") or "")
+            elif ev == "action_execution_result":
+                action_results.append(
+                    {
+                        "action_id": str(evt.get("action_id") or ""),
+                        "channel": str(evt.get("channel") or ""),
+                        "status": str(evt.get("status") or ""),
+                        "success": bool(evt.get("success")),
+                        "retry_reason": str(evt.get("retry_reason") or ""),
+                    }
+                )
             elif ev == "failure_routed" and not error:
                 error = str(evt.get("reason") or "")
             elif ev in {"retry_scheduled", "retry_exhausted"}:
@@ -3509,6 +3540,8 @@ class RuntimeEngine:
             output["retry_actions"] = retry_actions
         if fallback_actions:
             output["fallback_actions"] = fallback_actions
+        if action_results:
+            output["action_results"] = [dict(x) for x in action_results]
         step = TaskRunStep(
             step_id=f"s{len(cur.steps)+1:04d}",
             ts_start=float(ts_start),
@@ -3516,8 +3549,9 @@ class RuntimeEngine:
             duration_ms=int(max(0.0, (float(ts_end)-float(ts_start))) * 1000.0),
             input_payload=input_payload,
             tool_calls=tool_calls,
-            trace_events=[dict(x) for x in list(trace_events or []) if isinstance(x, dict)],
+            trace_events=[dict(x) for x in merged_trace if isinstance(x, dict)],
             output=output,
+            action_results=[dict(x) for x in action_results],
             error=error,
             status=status,
         )
@@ -4463,16 +4497,134 @@ class RuntimeEngine:
 
     def _emit_reply(self, msg_id: Optional[str], reply_text: str, idle_tag: bool, structured: bool = False) -> None:
         reply_text = self._finalize_reply_text(reply_text, structured=structured)
-        if not bool(structured):
-            self._synthesize_tts(reply_text)
+        envelope = ActionEnvelope.build(
+            channel="dialogue",
+            target="primary_chat",
+            payload={
+                "text": reply_text,
+                "msg_id": msg_id,
+                "idle_tag": bool(idle_tag),
+                "structured": bool(structured),
+                "voice_enabled": (not bool(structured)),
+            },
+            preconditions=[{"name": "non_empty_text", "ok": bool(reply_text)}],
+            timeout_s=2.8,
+            interruptible=True,
+            receipt_required=True,
+            priority="interaction_smoothness",
+        )
+        receipt = self._execute_actuation(
+            executor=self.dialogue_executor,
+            envelope=envelope,
+            source="emit_reply",
+        )
+        self._execute_interaction_action(
+            target="turn_delivery",
+            payload={"msg_id": msg_id or "", "idle_tag": bool(idle_tag), "structured": bool(structured)},
+            priority="interaction_smoothness",
+        )
+        self._execute_scene_effect_action(
+            target="avatar_expression",
+            payload={
+                "emotion": str(self.state.get("emotion") or ""),
+                "energy": int(self.state.get("energy", 60) or 60),
+                "affinity": int(self.state.get("affinity", 20) or 20),
+            },
+            priority="expressive_enrichment",
+        )
+        self.mon["last_dialogue_action_status"] = str(receipt.status)
+        self.mon["last_dialogue_action_id"] = str(receipt.action_id)
+        self.mon["last_dialogue_action_success"] = int(receipt.success)
+
+    def _execute_interaction_action(
+        self,
+        *,
+        target: str,
+        payload: Optional[Dict[str, Any]] = None,
+        priority: str = "interaction_smoothness",
+    ) -> Dict[str, Any]:
+        envelope = ActionEnvelope.build(
+            channel="interaction",
+            target=str(target or "interaction"),
+            payload=dict(payload or {}),
+            timeout_s=2.0,
+            interruptible=True,
+            receipt_required=True,
+            priority=str(priority or "interaction_smoothness"),
+        )
+        receipt = self._execute_actuation(executor=self.interaction_executor, envelope=envelope, source="interaction")
+        return dict(receipt.details or {})
+
+    def _execute_scene_effect_action(
+        self,
+        *,
+        target: str,
+        payload: Optional[Dict[str, Any]] = None,
+        priority: str = "expressive_enrichment",
+    ) -> Dict[str, Any]:
+        envelope = ActionEnvelope.build(
+            channel="scene_effect",
+            target=str(target or "scene"),
+            payload=dict(payload or {}),
+            timeout_s=1.5,
+            interruptible=True,
+            receipt_required=True,
+            priority=str(priority or "expressive_enrichment"),
+        )
+        receipt = self._execute_actuation(executor=self.scene_effect_executor, envelope=envelope, source="scene_effect")
+        return dict(receipt.details or {})
+
+    def _execute_actuation(self, *, executor: Any, envelope: ActionEnvelope, source: str) -> Any:
+        receipt = executor.execute(envelope)
+        evt = {
+            "event": "action_execution_result",
+            "ts": time.time(),
+            "source": str(source or ""),
+            "action_id": str(getattr(receipt, "action_id", "") or ""),
+            "channel": str(getattr(receipt, "channel", "") or envelope.channel),
+            "target": str(getattr(receipt, "target", "") or envelope.target),
+            "status": str(getattr(receipt, "status", "") or ""),
+            "success": bool(getattr(receipt, "success", False)),
+            "retry_reason": str(getattr(receipt, "retry_reason", "") or ""),
+            "started_at": float(getattr(receipt, "started_at", 0.0) or 0.0),
+            "ended_at": float(getattr(receipt, "ended_at", 0.0) or 0.0),
+            "priority": str(getattr(envelope, "priority", "") or ""),
+            "interruptible": int(bool(getattr(envelope, "interruptible", True))),
+            "details": dict(getattr(receipt, "details", {}) or {}),
+        }
+        self._append_jsonl(self._actuation_receipt_log_path, evt)
+        self._actuation_trace_buffer.append(dict(evt))
+        self.mon["actuation_last_channel"] = str(evt.get("channel") or "")
+        self.mon["actuation_last_status"] = str(evt.get("status") or "")
+        self.mon["actuation_last_success"] = int(bool(evt.get("success")))
+        self.mon["actuation_receipt_count"] = int(self.mon.get("actuation_receipt_count", 0) or 0) + 1
+        return receipt
+
+    def _dialogue_text_sink(self, text: str, payload: Dict[str, Any]) -> None:
+        msg_id = str(payload.get("msg_id") or "").strip() or None
+        idle_tag = bool(payload.get("idle_tag"))
         if msg_id:
-            db_write_outbox(self.cfg.db_path, msg_id, reply_text)
+            db_write_outbox(self.cfg.db_path, msg_id, text)
             db_set_inbox_status(self.cfg.db_path, msg_id, "done")
-            self.reply_q.put({"msg_id": msg_id, "reply": reply_text})
+            self.reply_q.put({"msg_id": msg_id, "reply": text})
             return
         if idle_tag:
-            db_write_system_pair(self.cfg.db_path, reply_text, tag="idle")
-        self.reply_q.put(reply_text)
+            db_write_system_pair(self.cfg.db_path, text, tag="idle")
+        self.reply_q.put(text)
+
+    @staticmethod
+    def _scene_effect_sink(payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Placeholder hook for live2d / animation / VFX.
+        return {"ok": True, "scene_effect": "noop", "payload_keys": sorted([str(k) for k in payload.keys()])}
+
+    @staticmethod
+    def _interaction_sink(payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "interaction": "handled",
+            "target": str(payload.get("target") or ""),
+            "payload_keys": sorted([str(k) for k in dict(payload.get("payload") or {}).keys()]),
+        }
 
     def _active_reply_limits(self) -> tuple[int, int]:
         max_sentences = int(self.reply_max_sentences)
@@ -4723,12 +4875,12 @@ class RuntimeEngine:
             head = head + "?"
         return head
 
-    def _synthesize_tts(self, reply_text: str) -> None:
+    def _dialogue_voice_subchannel(self, reply_text: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.speech_cfg.enabled_tts:
-            return
+            return {"ok": False, "reason": "tts_disabled"}
         t = str(reply_text or "").strip()
         if not t:
-            return
+            return {"ok": False, "reason": "empty_text"}
         prosody = ssml_prosody_from_state(
             emotion=str(self.state.get("emotion") or ""),
             energy=int(self.state.get("energy", 60) or 60),
@@ -4749,10 +4901,12 @@ class RuntimeEngine:
                 p = save_wav(out.get("audio") or b"", self.speech_cfg.tts_save_path)
                 self.state["last_tts_path"] = p
                 self.mon["tts_ok"] = int(self.mon.get("tts_ok", 0) or 0) + 1
-            else:
-                self.mon["tts_fail"] = int(self.mon.get("tts_fail", 0) or 0) + 1
-        except Exception:
+                return {"ok": True, "path": p}
             self.mon["tts_fail"] = int(self.mon.get("tts_fail", 0) or 0) + 1
+            return {"ok": False, "error": str(out.get("error") or "tts_failed")}
+        except Exception as e:
+            self.mon["tts_fail"] = int(self.mon.get("tts_fail", 0) or 0) + 1
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     def _parse_event(self, evt: Any) -> tuple[str, Optional[str], bool]:
         msg_id = None
