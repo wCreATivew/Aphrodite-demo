@@ -1,132 +1,54 @@
-# Pull Request Template
+# PR 提交模板（必填）
 
-## 变更类型
+> 标题请包含模块标识，例如：`[module:agentlib] feat: ...`
 
-- [x] ✨ 新功能
-- [ ] 🐛 Bug 修复
-- [ ] 📝 文档更新
-- [ ] ♻️ 代码重构
-- [ ] ⚡️ 性能优化
-- [ ] 🔧 配置变更
+## 1) 改动范围（必填）
 
-## 变更说明
+- 模块（与标题一致）：`<agentlib | agent-kernel | semantic-trigger | character | memory | voice | cli | tests>`
+- 影响目录（逐条列出）：
+  - `...`
+- 是否跨模块：`是 / 否`
+- 若跨模块，请说明审批人及原因：
+  - `...`
 
-### 新增模块
+## 2) 风险评估（必填）
 
-1. **角色生成系统** (`src/character/`)
-   - 从用户简短描述生成完整角色设定
-   - 人格特质（大五人格）+ 声音 + 语法 + 环境 + 立场
-   - 人格 - 记忆联动：根据人格自动配置记忆参数
+- 风险等级：`低 / 中 / 高`
+- 风险点：
+  - `...`
+- 受影响能力（接口、数据、性能、稳定性）：
+  - `...`
 
-2. **声音系统** (`src/voice/`)
-   - GPT-SoVITS 声音克隆适配器
-   - 支持 7 种情感控制
-   - 少样本克隆（1-5 分钟音频）
+## 3) 回滚方案（必填）
 
-3. **记忆系统** (`src/memory/`)
-   - 三层记忆模型：工作/情景/语义
-   - SQLite + FAISS 存储与检索
-   - 遗忘曲线 + 强化机制
-   - 话题熔断机制
-   - 人格感知配置
+- 回滚触发条件：
+  - `...`
+- 回滚步骤（命令或操作）：
+  1. `...`
+  2. `...`
+- 数据兼容说明（如涉及迁移）：
+  - `...`
 
-### 核心功能
+## 4) 验证证据（必填）
 
-- ✅ 人格特质自动转换为记忆系统参数
-- ✅ 多角色隔离（character_id）
-- ✅ 遗忘曲线（可配置半衰期）
-- ✅ 记忆强化（见过次数加固）
-- ✅ 话题熔断（检测快速转移）
+- 测试命令与结果：
+  - [ ] 单元测试：`...`
+  - [ ] 集成测试：`...`
+  - [ ] 手工验证：`...`
+- 关键日志/截图/报告链接：
+  - `...`
 
-### 测试
+## 5) 审批规则确认（必填）
 
-- ✅ 丰川祥子角色测试（Mock 模式）
-- ✅ 记忆系统测试（独立版本，零依赖）
-- ✅ 人格 - 记忆联动验证
-- ✅ 遗忘曲线验证
+- [ ] 我已阅读 `docs/pr-governance.md` 并按路径级权限规则发起评审
+- [ ] 若命中高风险路径，已请求 Owner 审批
+- [ ] 本 PR 未越界修改其他模块目录（将由 CI 自动校验）
 
-## 技术栈
+## 6) 合规问答（必填，填写“是/否”）
 
-- **LLM**: Qwen3 / GPT-4
-- **向量检索**: Sentence Transformers + FAISS
-- **声音克隆**: GPT-SoVITS
-- **数据库**: SQLite
-- **语言**: Python 3.10+
+- 本 PR 是否仅修改授权白名单路径？**是 / 否**
+- 是否附带风险说明、回滚步骤、验证证据？**是 / 否**
+- 是否有跨包越界改动？如有，是否获得额外批准？**是 / 否**
+- 本次变更是否可被独立回滚（不影响其他包）？**是 / 否**
 
-## 依赖
-
-```bash
-# 核心依赖
-pip install openai duckduckgo-search
-
-# 向量检索（可选，启用语义检索）
-pip install numpy faiss-cpu sentence-transformers
-
-# 声音克隆（可选，启用 TTS）
-# 需单独安装 GPT-SoVITS: https://github.com/RVC-Boss/GPT-SoVITS
-```
-
-## 快速开始
-
-```bash
-# 1. 安装依赖
-pip install -r requirements.txt
-
-# 2. 配置 API Key
-export DASHSCOPE_API_KEY="your_key"
-
-# 3. 测试角色生成
-python3 test_character_sakiko.py
-
-# 4. 测试记忆系统
-python3 test_memory_simple.py
-```
-
-## 文档
-
-- `FRAMEWORK.md` - 项目整体架构
-- `DELIVERY_REPORT.md` - 交付报告
-- `src/character/README.md` - 角色系统使用
-- `src/character/SETUP.md` - 环境配置
-- `src/voice/README.md` - 声音系统使用
-- `docs/memory_system_integration.md` - 记忆系统融合方案
-
-## 示例角色：丰川祥子
-
-```python
-from src.character import generate_character_from_query
-
-# 生成角色
-profile = generate_character_from_query("banG Dream! 里的丰川祥子")
-
-# 人格特质
-print(profile.persona.tags)  # ["坚强", "傲娇", "隐藏脆弱", "音乐天才"]
-
-# 记忆配置（根据人格自动调整）
-print(profile.memory_config.half_life_days)  # 12 天（符合"不看向过去"）
-print(profile.memory_config.idle_threshold_sec)  # 45 秒（内向性格）
-```
-
-## 下一步计划
-
-- [ ] 集成到 runtime_engine
-- [ ] LLM 提炼语义记忆
-- [ ] 关系系统
-- [ ] 世界状态系统
-- [ ] 前端界面
-
-## 检查清单
-
-- [x] 代码通过测试
-- [x] 文档完整
-- [x] 依赖说明清晰
-- [x] 示例代码可运行
-- [ ] 集成到现有系统（下一步）
-
-## 截图/演示
-
-（如有）
-
----
-
-**关联 Issue:** #1
+> 若第 3 项为“是”，必须额外填写：`跨包越界批准: APPROVED by @owner_or_maintainer（原因）`
