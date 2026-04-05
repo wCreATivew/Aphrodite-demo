@@ -1,0 +1,37 @@
+{
+  "id": "social_scene",
+  "name": "社交场景：来访接待与礼貌引导",
+  "goal": "在公开演示中稳定展示：识别来访、社交欢迎、引导到目标区域。",
+  "steps": [
+    {
+      "event": "visitor.arrival",
+      "mock_perception": {
+        "persona": "guest",
+        "mood": "neutral",
+        "name": "Alex"
+      },
+      "action": "greet_visitor",
+      "expect": "success"
+    },
+    {
+      "event": "visitor.intent_captured",
+      "mock_perception": {
+        "intent": "meeting_checkin",
+        "target": "demo_hall"
+      },
+      "action": "confirm_schedule",
+      "expect": "success"
+    },
+    {
+      "event": "escort.route_ready",
+      "mock_perception": {
+        "route": ["lobby", "corridor_b", "demo_hall"],
+        "eta_min": 2
+      },
+      "action": "guide_visitor",
+      "expect": "success"
+    }
+  ],
+  "degrade_steps": [3],
+  "notes": "第 3 步模拟导航噪声，展示系统优先保留可解释口播指引。"
+}
