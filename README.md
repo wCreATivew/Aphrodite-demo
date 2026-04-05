@@ -89,3 +89,14 @@ streamlit run streamlit_homepage.py
 - 输入/输出示例
 - 典型场景（问答、检索、助手触发）
 - 一套可复制的本地运行命令（从安装到评估）。
+
+---
+
+## 演示稳定化入口（新增）
+
+为提升对外演示可重复性，仓库提供了固定剧本 + 一键运行脚本 + 最小指标面板：
+
+- 剧本说明：`docs/demo/playbooks.md`
+- 应急手册：`docs/demo/failure_runbook.md`
+- 一键运行：`bash scripts/run_demo_bundle.sh`
+

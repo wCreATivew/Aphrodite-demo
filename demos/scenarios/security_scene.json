@@ -1,0 +1,37 @@
+{
+  "id": "security_scene",
+  "name": "安全场景：异常门禁与隔离",
+  "goal": "在可控演示中展示：系统识别异常、触发隔离、通知值班人员。",
+  "steps": [
+    {
+      "event": "camera.motion_detected",
+      "mock_perception": {
+        "zone": "server_room_gate",
+        "confidence": 0.96,
+        "badge_id": "UNKNOWN"
+      },
+      "action": "validate_badge",
+      "expect": "success"
+    },
+    {
+      "event": "badge.validation_failed",
+      "mock_perception": {
+        "risk_level": "high",
+        "retry_count": 1
+      },
+      "action": "lock_door",
+      "expect": "success"
+    },
+    {
+      "event": "security.alert_created",
+      "mock_perception": {
+        "channel": "on_call_sms",
+        "recipient": "duty_manager"
+      },
+      "action": "notify_oncall",
+      "expect": "success"
+    }
+  ],
+  "degrade_steps": [2],
+  "notes": "第 2 步模拟感知抖动，验证降级路径仍可完成关键动作。"
+}
