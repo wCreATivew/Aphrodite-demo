@@ -1,0 +1,19 @@
+# 路径级审批基线（请替换为真实 GitHub 用户/团队）
+# Owner（全局）
+* @your-org/owners
+
+# Maintainer（模块）
+agentlib/** @your-org/maintainers-agentlib
+agent_kernel/** @your-org/maintainers-kernel
+src/semantic_trigger/** @your-org/maintainers-semantic
+src/character/** @your-org/maintainers-character
+src/memory/** @your-org/maintainers-memory
+src/voice/** @your-org/maintainers-voice
+cli/** @your-org/maintainers-cli
+tests/** @your-org/maintainers-tests
+
+# 高风险路径（必须包含 Owner）
+.github/workflows/** @your-org/owners
+agent_kernel/** @your-org/owners @your-org/maintainers-kernel
+agentlib/runtime_engine.py @your-org/owners @your-org/maintainers-agentlib
+agentlib/patch_executor.py @your-org/owners @your-org/maintainers-agentlib

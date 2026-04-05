@@ -1,0 +1,44 @@
+# 模块白名单：每个模块只允许修改自己的目录。
+# 注意：将 owner/maintainer/contributor 与 CODEOWNERS、分支保护规则联动。
+
+modules:
+  agentlib:
+    paths:
+      - "agentlib/**"
+  agent-kernel:
+    paths:
+      - "agent_kernel/**"
+  semantic-trigger:
+    paths:
+      - "src/semantic_trigger/**"
+  character:
+    paths:
+      - "src/character/**"
+  memory:
+    paths:
+      - "src/memory/**"
+  voice:
+    paths:
+      - "src/voice/**"
+  cli:
+    paths:
+      - "cli/**"
+  tests:
+    paths:
+      - "tests/**"
+
+global_allowlist:
+  # 文档与治理配置允许跨模块修改
+  - "docs/**"
+  - ".github/**"
+  - "README.md"
+  - "FRAMEWORK.md"
+  - "DELIVERY_REPORT.md"
+  - "requirements.txt"
+
+# 高风险路径：需要 Owner 审批（见 docs/pr-governance.md）
+high_risk_paths:
+  - "agent_kernel/**"
+  - "agentlib/runtime_engine.py"
+  - "agentlib/patch_executor.py"
+  - ".github/workflows/**"
