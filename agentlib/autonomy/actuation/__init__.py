@@ -2,20 +2,24 @@ from .dialogue_executor import DialogueExecutor
 from .interaction_executor import (
     ActionEnvelope,
     ActionReceipt,
-    FailureClass,
+    DecisionContext,
+    DecisionFeedback,
+    DecisionSummary,
+    DecisionThresholds,
     InteractionExecutor,
-    InterruptMode,
-    RetryPolicy,
+    TurnDecisionReport,
 )
 from .scene_effect_executor import SceneEffectExecutor
 
 __all__ = [
     "ActionEnvelope",
     "ActionReceipt",
-    "FailureClass",
+    "DecisionContext",
+    "DecisionFeedback",
+    "DecisionSummary",
+    "DecisionThresholds",
     "InteractionExecutor",
-    "InterruptMode",
-    "RetryPolicy",
+    "TurnDecisionReport",
     "DialogueExecutor",
     "SceneEffectExecutor",
 ]

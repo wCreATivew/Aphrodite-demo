@@ -1,0 +1,37 @@
+{
+  "id": "task_scene",
+  "name": "任务场景：需求接收到执行回执",
+  "goal": "稳定复现任务闭环：解析目标、分配执行、返回结构化结果。",
+  "steps": [
+    {
+      "event": "task.request_received",
+      "mock_perception": {
+        "priority": "p1",
+        "task_type": "report_generation",
+        "requester": "product_manager"
+      },
+      "action": "parse_task",
+      "expect": "success"
+    },
+    {
+      "event": "task.plan_compiled",
+      "mock_perception": {
+        "subtasks": 3,
+        "deadline": "2026-04-04T18:00:00Z"
+      },
+      "action": "dispatch_subtasks",
+      "expect": "success"
+    },
+    {
+      "event": "task.result_ready",
+      "mock_perception": {
+        "artifact": "summary.md",
+        "quality_gate": "pass"
+      },
+      "action": "deliver_receipt",
+      "expect": "success"
+    }
+  ],
+  "degrade_steps": [1],
+  "notes": "第 1 步模拟上游输入缺字段，验证降级后仍可完成最小执行计划。"
+}
