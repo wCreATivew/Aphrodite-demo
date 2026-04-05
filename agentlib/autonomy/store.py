@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .models import ExecutionRecord, Goal, ReflectionRecord, Task
 from .scene_runtime import SceneRuntime
-from .state import AgentState, SceneDelta, SceneInteractionOutcome, SceneState
+from .state import AgentState, SceneActionReceipt, SceneDelta, SceneInteractionOutcome, SceneState
 from .tracing import TraceEvent
 
 
@@ -15,6 +15,8 @@ class SceneSnapshot:
 
     version: str
     scene_id: str
+    state_version: int
+    delta_seq: int
     tick: int
     objects: Dict[str, Dict[str, Any]]
     positions: Dict[str, str]
@@ -31,6 +33,8 @@ class ScenePerception:
     """Actor-facing scene view used as next-step perception input."""
 
     actor: str
+    state_version: int
+    delta_seq: int
     tick: int
     objects: Dict[str, Dict[str, Any]]
     positions: Dict[str, str]
@@ -50,6 +54,7 @@ class InMemoryStateStore:
     replan_actions: List[str] = field(default_factory=list)
     scene: SceneState = field(default_factory=SceneState)
     scene_deltas: List[SceneDelta] = field(default_factory=list)
+    scene_action_receipts: List[SceneActionReceipt] = field(default_factory=list)
     last_done_ts: float = 0.0
     last_done_cycle: int = 0
     pause_requested: bool = False
@@ -84,6 +89,9 @@ class InMemoryStateStore:
     def add_scene_delta(self, delta: SceneDelta) -> None:
         self.scene_deltas.append(delta)
 
+    def add_scene_action_receipt(self, receipt: SceneActionReceipt) -> None:
+        self.scene_action_receipts.append(receipt)
+
     def apply_scene_action(
         self,
         *,
@@ -93,6 +101,9 @@ class InMemoryStateStore:
         object_updates: Optional[Dict[str, Dict[str, Any]]] = None,
         env_updates: Optional[Dict[str, Any]] = None,
         position_updates: Optional[Dict[str, str]] = None,
+        control: Optional[Dict[str, Any]] = None,
+        retry_policy: Optional[Dict[str, Any]] = None,
+        idempotent: bool = False,
     ) -> Tuple[SceneInteractionOutcome, SceneDelta]:
         runtime = SceneRuntime(self.scene)
         outcome, delta = runtime.apply_action(
@@ -102,9 +113,18 @@ class InMemoryStateStore:
             object_updates=object_updates,
             env_updates=env_updates,
             position_updates=position_updates,
+            control=control,
+            retry_policy=retry_policy,
+            idempotent=idempotent,
         )
+        pre_delta = runtime.consume_last_pre_delta()
+        receipt = runtime.consume_last_receipt()
         self.scene = runtime.state
+        if pre_delta is not None:
+            self.add_scene_delta(pre_delta)
         self.add_scene_delta(delta)
+        if receipt is not None:
+            self.add_scene_action_receipt(receipt)
         return outcome, delta
 
     def update_scene_environment(self, updates: Dict[str, Any]) -> SceneDelta:
@@ -118,6 +138,8 @@ class InMemoryStateStore:
         recent = self.scene_deltas[-max(0, int(recent_delta_limit)) :] if recent_delta_limit else []
         return ScenePerception(
             actor=str(actor or "agent"),
+            state_version=int(self.scene.state_version),
+            delta_seq=int(self.scene.delta_seq),
             tick=int(self.scene.tick),
             objects={
                 obj_id: {
@@ -140,10 +162,14 @@ class InMemoryStateStore:
             environment=dict(self.scene.environment),
             recent_deltas=[
                 {
+                    "seq": d.seq,
                     "tick": d.tick,
                     "actor": d.actor,
                     "action": d.action,
                     "point_id": d.point_id,
+                    "phase": d.phase,
+                    "outcome": d.outcome,
+                    "state_version": d.state_version,
                     "object_updates": dict(d.object_updates),
                     "position_updates": dict(d.position_updates),
                     "env_updates": dict(d.env_updates),
@@ -168,10 +194,14 @@ class InMemoryStateStore:
         if self.scene_deltas:
             d = self.scene_deltas[-1]
             last_delta = {
+                "seq": d.seq,
                 "tick": d.tick,
                 "actor": d.actor,
                 "action": d.action,
                 "point_id": d.point_id,
+                "phase": d.phase,
+                "outcome": d.outcome,
+                "state_version": d.state_version,
                 "object_updates": dict(d.object_updates),
                 "position_updates": dict(d.position_updates),
                 "env_updates": dict(d.env_updates),
@@ -181,6 +211,8 @@ class InMemoryStateStore:
         return SceneSnapshot(
             version="scene_snapshot.v1",
             scene_id=str(self.scene.scene_id),
+            state_version=int(self.scene.state_version),
+            delta_seq=int(self.scene.delta_seq),
             tick=int(self.scene.tick),
             objects={
                 obj_id: {
