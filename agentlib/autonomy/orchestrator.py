@@ -11,6 +11,11 @@ from agent_kernel.schemas import ExecutableSubgoal, RetryPolicy
 
 from .interfaces import Evaluator, Executor, Planner, Reflector, ToolRegistry
 from .models import Goal, ReflectionRecord, Task
+from .perception.audio_adapter import AudioAdapter
+from .perception.fusion import PerceptionFusionEngine
+from .perception.olfactory_adapter import OlfactoryAdapter
+from .perception.tactile_adapter import TactileAdapter
+from .perception.vision_adapter import VisionAdapter
 from .state import AgentState
 from .store import InMemoryStateStore
 from .tracing import TraceEvent, TraceHook
@@ -37,6 +42,8 @@ class Orchestrator:
         self.store = store or InMemoryStateStore()
         self.trace_hooks = list(trace_hooks or [])
         self.emotion_state_provider = emotion_state_provider
+        self._adapters = [VisionAdapter(), AudioAdapter(), TactileAdapter(), OlfactoryAdapter()]
+        self.perception_fusion = PerceptionFusionEngine()
         self.circuit_breaker = CircuitBreaker(
             same_error_limit=2,
             same_action_replan_limit=3,
