@@ -1,0 +1,78 @@
+[
+  {
+    "name": "样例1_视觉触觉冲突",
+    "summary": {
+      "door": {
+        "state_label": "passable",
+        "best_modality": "vision",
+        "confidence": 0.92,
+        "uncertainty": 0.08,
+        "uncertainty_label": "low",
+        "evidence_modalities": ["tactile", "vision"]
+      }
+    },
+    "conflicts": [
+      {
+        "state_key": "door",
+        "labels": ["blocked", "passable"],
+        "modalities": ["tactile", "vision"],
+        "winner_modality": "vision",
+        "winner_label": "passable"
+      }
+    ],
+    "brain_signal": {
+      "confidence": 0.92,
+      "uncertainty": 0.08,
+      "uncertainty_label": "low"
+    },
+    "degradation_mode": "double_or_more_missing"
+  },
+  {
+    "name": "样例2_视觉听觉冲突",
+    "summary": {
+      "npc_mood": {
+        "state_label": "calm",
+        "best_modality": "vision",
+        "confidence": 0.73,
+        "uncertainty": 0.27,
+        "uncertainty_label": "medium",
+        "evidence_modalities": ["audio", "vision"]
+      }
+    },
+    "conflicts": [
+      {
+        "state_key": "npc_mood",
+        "labels": ["angry", "calm"],
+        "modalities": ["audio", "vision"],
+        "winner_modality": "vision",
+        "winner_label": "calm"
+      }
+    ],
+    "brain_signal": {
+      "confidence": 0.73,
+      "uncertainty": 0.27,
+      "uncertainty_label": "medium"
+    },
+    "degradation_mode": "double_or_more_missing"
+  },
+  {
+    "name": "样例3_仅嗅觉输入",
+    "summary": {
+      "air": {
+        "state_label": "smoke",
+        "best_modality": "olfactory",
+        "confidence": 0.66,
+        "uncertainty": 0.34,
+        "uncertainty_label": "medium",
+        "evidence_modalities": ["olfactory"]
+      }
+    },
+    "conflicts": [],
+    "brain_signal": {
+      "confidence": 0.66,
+      "uncertainty": 0.34,
+      "uncertainty_label": "medium"
+    },
+    "degradation_mode": "double_or_more_missing"
+  }
+]

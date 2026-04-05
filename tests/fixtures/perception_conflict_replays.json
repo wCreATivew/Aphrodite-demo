@@ -1,0 +1,73 @@
+[
+  {
+    "name": "vision_tactile_door_conflict",
+    "frames": [
+      {
+        "timestamp": 1000.0,
+        "source": "replay_cam_a",
+        "modality": "vision",
+        "payload": { "state_key": "door_state", "state_label": "open" },
+        "confidence": 0.91,
+        "noise_level": 0.06
+      },
+      {
+        "timestamp": 1000.2,
+        "source": "replay_touch_pad",
+        "modality": "tactile",
+        "payload": { "state_key": "door_state", "state_label": "blocked" },
+        "confidence": 0.82,
+        "noise_level": 0.13
+      }
+    ]
+  },
+  {
+    "name": "audio_vision_emotion_conflict",
+    "frames": [
+      {
+        "timestamp": 1010.0,
+        "source": "replay_mic",
+        "modality": "audio",
+        "payload": { "state_key": "npc_emotion", "state_label": "angry" },
+        "confidence": 0.79,
+        "noise_level": 0.16
+      },
+      {
+        "timestamp": 1010.1,
+        "source": "replay_cam_b",
+        "modality": "vision",
+        "payload": { "state_key": "npc_emotion", "state_label": "calm" },
+        "confidence": 0.84,
+        "noise_level": 0.11
+      }
+    ]
+  },
+  {
+    "name": "tri_modal_intent_conflict",
+    "frames": [
+      {
+        "timestamp": 1020.0,
+        "source": "replay_cam_c",
+        "modality": "vision",
+        "payload": { "state_key": "intent", "state_label": "approach" },
+        "confidence": 0.78,
+        "noise_level": 0.18
+      },
+      {
+        "timestamp": 1020.1,
+        "source": "replay_touch_glove",
+        "modality": "tactile",
+        "payload": { "state_key": "intent", "state_label": "retreat" },
+        "confidence": 0.81,
+        "noise_level": 0.14
+      },
+      {
+        "timestamp": 1020.2,
+        "source": "replay_mic_b",
+        "modality": "audio",
+        "payload": { "state_key": "intent", "state_label": "freeze" },
+        "confidence": 0.75,
+        "noise_level": 0.22
+      }
+    ]
+  }
+]
