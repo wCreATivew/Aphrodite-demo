@@ -43,10 +43,7 @@ Scene Runtime & State Store
   - `interfaces.py`：Planner/Executor/Evaluator/Reflector 接口
   - `state.py` / `store.py`：状态与存储
   - `scene_runtime.py`：场景运行层
-  - `perception/`：伪视觉/听觉/触觉/嗅觉与融合
-  - `actuation/`：对话、交互、场景影响执行器
-  - `shell_adapters/`：外壳适配器（含 mock）
-  - `demo_mvp.py` / `demo_v2.py`：演示入口
+  - `demo_v2.py`：主线演示入口（当前保留）
 
 - `agentlib/runtime_engine.py`
   - 综合运行时中枢（历史能力与当前能力共存）
@@ -71,20 +68,9 @@ pip install -r requirements.txt
 
 ## 5. 快速运行 Demo
 
-当前没有唯一“主入口”，推荐以下两种演示方式：
+当前没有唯一“主入口”，推荐主线演示方式：
 
-### A. Orchestrator MVP 演示
-
-```bash
-python -m agentlib.autonomy.demo_mvp
-```
-
-你将看到：
-- 任务被计划并执行
-- 失败任务触发 fallback/retry
-- 最终 summary 与任务状态输出
-
-### B. Orchestrator V2 演示（更接近真实流程）
+### Orchestrator V2 演示（主链路）
 
 ```bash
 python -m agentlib.autonomy.demo_v2
@@ -112,4 +98,3 @@ A：先保留接口位，不阻塞主循环；文件补齐后再接入。
 
 - 第二轮：稳定性、冲突裁决、执行可靠性、场景一致性
 - 第三轮：策略增强、情感算法接入、演示产品化
-

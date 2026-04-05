@@ -49,7 +49,6 @@ __all__ = [
     "MOTOR_CODE_COMMAND_MISMATCH",
     "ShellState",
     "Orchestrator",
-    "MockShellAdapter",
     "TraceEvent",
     "TraceHook",
     "console_trace_hook",
