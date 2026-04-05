@@ -40,7 +40,7 @@ def classify_failure(
         subgoal_id=subgoal_id,
     )
     history = list(prior_fingerprints or [])
-    if len([x for x in history if x == fp]) >= 1:
+    if len([x for x in history if x == fp]) >= 2:
         return FailureDecision(
             category=FailureCategory.REPEATED_SAME_ERROR,
             action=RouteAction.CIRCUIT_BREAK,

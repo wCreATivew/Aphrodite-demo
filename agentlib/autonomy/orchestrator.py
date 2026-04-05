@@ -14,7 +14,11 @@ from .models import Goal, ReflectionRecord, Task
 from .state import AgentState
 from .store import InMemoryStateStore
 from .tracing import TraceEvent, TraceHook
-
+from .perception.audio_adapter import AudioAdapter
+from .perception.olfactory_adapter import OlfactoryAdapter
+from .perception.tactile_adapter import TactileAdapter
+from .perception.vision_adapter import VisionAdapter
+from .perception.fusion import PerceptionFusionEngine
 
 class Orchestrator:
     def __init__(
@@ -38,11 +42,18 @@ class Orchestrator:
         self.trace_hooks = list(trace_hooks or [])
         self.emotion_state_provider = emotion_state_provider
         self.circuit_breaker = CircuitBreaker(
-            same_error_limit=2,
+            same_error_limit=3,
             same_action_replan_limit=3,
             stagnation_cycle_limit=10,
             stagnation_seconds=120,
         )
+        self._adapters = [
+            VisionAdapter(),
+            AudioAdapter(),
+            TactileAdapter(),
+            OlfactoryAdapter(),
+        ]
+        self.perception_fusion = PerceptionFusionEngine()
 
     def pause(self) -> None:
         self.store.pause_requested = True
