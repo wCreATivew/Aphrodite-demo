@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from agentlib.autonomy import Goal, InMemoryStateStore, InMemoryToolRegistry, Orchestrator
 from agentlib.autonomy.mock_components import MockEvaluator, MockExecutor, MockPlanner, MockReflector
 from agentlib.autonomy.perception import PerceptionFusionEngine
@@ -38,8 +41,10 @@ def test_fusion_detects_conflicts_and_penalizes_confidence():
     assert snapshot["conflicts"]
     labels = snapshot["conflicts"][0]["labels"]
     assert "open" in labels and "blocked" in labels
-    assert snapshot["aligned_events"][0]["confidence"] < 0.9
+    assert snapshot["conflicts"][0]["winner_modality"] == "vision"
+    assert snapshot["summary"]["door"]["best_modality"] == "vision"
     assert snapshot["aligned_events"][1]["confidence"] < 0.8
+    assert snapshot["arbitration_log"]
 
 
 def test_orchestrator_runs_perception_before_brain_execution_cycle():
@@ -81,10 +86,54 @@ def test_fusion_partial_modalities_runs_without_error():
         ]
     )
 
-    assert snapshot["degraded"] is False
+    assert snapshot["degraded"] is True
+    assert snapshot["degradation_mode"] == "double_or_more_missing"
     assert len(snapshot["aligned_events"]) == 1
     assert snapshot["modality_status"]["vision"]["present"] is True
     assert snapshot["conflicts"] == []
+    assert snapshot["brain_signal"]["confidence"] > 0.9
+
+
+def test_fusion_outputs_unified_confidence_and_uncertainty_for_brain():
+    engine = PerceptionFusionEngine()
+    snapshot = engine.run_cycle(
+        [
+            {
+                "timestamp": 300.0,
+                "source": "mock_camera",
+                "modality": "vision",
+                "payload": {"state_key": "npc_mood", "state_label": "neutral"},
+                "confidence": 0.75,
+                "noise_level": 0.12,
+            },
+            {
+                "timestamp": 300.1,
+                "source": "mock_audio",
+                "modality": "audio",
+                "payload": {"state_key": "npc_mood", "state_label": "neutral"},
+                "confidence": 0.7,
+                "noise_level": 0.1,
+            },
+        ]
+    )
+
+    assert snapshot["summary"]["npc_mood"]["uncertainty"] >= 0.0
+    assert snapshot["summary"]["npc_mood"]["uncertainty_label"] in {"low", "medium", "high", "critical"}
+    assert snapshot["brain_signal"]["confidence"] > 0.0
+    assert snapshot["brain_signal"]["uncertainty_label"] in {"low", "medium", "high", "critical"}
+
+
+def test_fusion_conflict_replay_dataset_has_three_groups():
+    fixture_path = Path(__file__).parent / "fixtures" / "perception_conflict_replays.json"
+    replay_groups = json.loads(fixture_path.read_text(encoding="utf-8"))
+    engine = PerceptionFusionEngine()
+
+    assert len(replay_groups) == 3
+    for replay in replay_groups:
+        snapshot = engine.run_cycle(replay["frames"])
+        assert snapshot["conflicts"], f"expected conflict in replay group: {replay['name']}"
+        assert snapshot["arbitration_log"], f"missing arbitration log in replay group: {replay['name']}"
+        assert snapshot["brain_signal"]["confidence"] > 0.0
 
 
 class _BrokenAdapter:
