@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Any, Callable, Dict, Optional
 
-from .interaction_executor import ActionEnvelope, ActionReceipt, InteractionExecutor
+from .interaction_executor import ActionEnvelope, ActionReceipt, FailureClass, InteractionExecutor
 
 
 class DialogueExecutor(InteractionExecutor):
@@ -24,23 +24,19 @@ class DialogueExecutor(InteractionExecutor):
         self._voice_sink = voice_sink
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dialogue-actuation")
 
-    def execute(self, envelope: ActionEnvelope) -> ActionReceipt:
-        started = time.time()
-        base = super().execute(envelope)
-        if not base.success:
-            return base
-
+    def _execute_once(self, envelope: ActionEnvelope, started: float) -> ActionReceipt:
         text = str(envelope.payload.get("text") or "").strip()
         if not text:
             return ActionReceipt(
                 action_id=envelope.action_id,
                 channel=envelope.channel,
                 target=envelope.target,
-                status="failed",
+                status="fail",
                 success=False,
                 started_at=started,
                 ended_at=time.time(),
                 retry_reason="empty_text",
+                failure_class=FailureClass.NON_RETRYABLE.value,
             )
 
         def _run_text() -> None:
@@ -54,22 +50,24 @@ class DialogueExecutor(InteractionExecutor):
                 action_id=envelope.action_id,
                 channel=envelope.channel,
                 target=envelope.target,
-                status="retry",
+                status="timeout",
                 success=False,
                 started_at=started,
                 ended_at=time.time(),
                 retry_reason="dialogue_text_timeout",
+                failure_class=FailureClass.RETRYABLE.value,
             )
         except Exception as e:
             return ActionReceipt(
                 action_id=envelope.action_id,
                 channel=envelope.channel,
                 target=envelope.target,
-                status="failed",
+                status="fail",
                 success=False,
                 started_at=started,
                 ended_at=time.time(),
                 retry_reason=f"dialogue_text_error:{type(e).__name__}",
+                failure_class=FailureClass.RETRYABLE.value,
             )
 
         details: Dict[str, Any] = {"text_delivered": True}
@@ -87,9 +85,10 @@ class DialogueExecutor(InteractionExecutor):
             action_id=envelope.action_id,
             channel=envelope.channel,
             target=envelope.target,
-            status="ok",
+            status="success",
             success=True,
             started_at=started,
             ended_at=time.time(),
+            failure_class="",
             details=details,
         )

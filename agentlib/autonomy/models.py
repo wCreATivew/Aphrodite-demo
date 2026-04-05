@@ -77,6 +77,47 @@ class RetryPolicy:
     base_delay_ms: int = 300
 
 
+MOTOR_CODE_OK = "ok"
+MOTOR_CODE_FAILED = "failed"
+MOTOR_CODE_ACTION_NOT_FOUND = "action_not_found"
+MOTOR_CODE_COMMAND_MISMATCH = "command_mismatch"
+
+
+@dataclass
+class ActuatorCapability:
+    name: str
+    description: str
+    command: str
+    required_params: List[str] = field(default_factory=list)
+    optional_params: List[str] = field(default_factory=list)
+    supports_rollback: bool = False
+
+
+@dataclass
+class MotorCommand:
+    command: str
+    params: Dict[str, Any] = field(default_factory=dict)
+    command_id: str = field(default_factory=lambda: _new_id("cmd"))
+    idempotency_key: str = ""
+    rollback_on_failure: bool = True
+
+
+@dataclass
+class MotorCommandResult:
+    code: str
+    success: bool
+    execution: Optional["ExecutionRecord"] = None
+    error: str = ""
+
+
+@dataclass
+class ShellState:
+    shell_id: str
+    status: str = "idle"
+    pose: Dict[str, Any] = field(default_factory=dict)
+    held_object: str = ""
+
+
 @dataclass
 class ExecutableSubgoal:
     id: str
