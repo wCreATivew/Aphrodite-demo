@@ -60,6 +60,8 @@ class SceneState:
     """
 
     scene_id: str = "default"
+    state_version: int = 1
+    delta_seq: int = 0
     tick: int = 0
     objects: Dict[str, SceneObjectState] = field(default_factory=dict)
     positions: Dict[str, str] = field(default_factory=dict)
@@ -75,14 +77,44 @@ class SceneInteractionOutcome:
     blocked_by: List[str] = field(default_factory=list)
 
 
+class SceneActionStatus(str, Enum):
+    SUCCESS = "success"
+    FAIL = "fail"
+    TIMEOUT = "timeout"
+    CANCEL = "cancel"
+
+
+@dataclass
+class SceneActionReceipt:
+    """Unified action execution receipt for auditing and retry decisions."""
+
+    action_id: str
+    actor: str
+    action: str
+    point_id: Optional[str]
+    status: SceneActionStatus
+    outcome_reason: str
+    pre_delta_seq: int
+    post_delta_seq: int
+    attempts_used: int = 1
+    max_attempts: int = 1
+    retryable: bool = False
+    should_retry: bool = False
+    retry_trigger: str = ""
+
+
 @dataclass
 class SceneDelta:
     """Atomic scene mutation for trace + persistence replay."""
 
+    seq: int
     tick: int
     actor: str
     action: str
     point_id: Optional[str]
+    phase: str = "post"
+    outcome: str = "applied"
+    state_version: int = 1
     object_updates: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     position_updates: Dict[str, str] = field(default_factory=dict)
     env_updates: Dict[str, Any] = field(default_factory=dict)
