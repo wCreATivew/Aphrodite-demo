@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agent_kernel.circuit_breaker import CircuitBreaker
 from agent_kernel.compile_check import plan_compile_check
-from agent_kernel.failure_router import classify_failure
+from agent_kernel.failure_router import FailureDecision, classify_failure
 from agent_kernel.local_replan import action_fingerprint
 from agent_kernel.schemas import ExecutableSubgoal, RetryPolicy
 
@@ -16,14 +16,9 @@ from .perception.fusion import PerceptionFusionEngine
 from .perception.olfactory_adapter import OlfactoryAdapter
 from .perception.tactile_adapter import TactileAdapter
 from .perception.vision_adapter import VisionAdapter
-from .state import AgentState
+from .state import RuntimePhaseState
 from .store import InMemoryStateStore
 from .tracing import TraceEvent, TraceHook
-from .perception.audio_adapter import AudioAdapter
-from .perception.olfactory_adapter import OlfactoryAdapter
-from .perception.tactile_adapter import TactileAdapter
-from .perception.vision_adapter import VisionAdapter
-from .perception.fusion import PerceptionFusionEngine
 
 class Orchestrator:
     def __init__(
@@ -77,6 +72,35 @@ class Orchestrator:
         for hook in self.trace_hooks:
             hook(evt)
 
+    def _dispatch_failure_decision(self, *, goal: Goal, task: Task, decision: FailureDecision) -> str:
+        action = str(decision.action.value)
+        if action == "retry" and task.attempt_count < task.max_attempts:
+            task.status = "pending"
+            return "continue"
+        if action in {"ask_user", "repair_auth"}:
+            task.status = "blocked"
+            return "continue"
+        if action in {"local_replan", "local_replan_with_constraints"}:
+            self.store.set_state(RuntimePhaseState.REPLANNING)
+            extra_tasks = self.planner.replan(
+                goal,
+                self.store,
+                ReflectionRecord(
+                    goal_id=goal.id,
+                    task_id=task.id,
+                    action="replan",
+                    reason=decision.reason,
+                    replan_required=True,
+                ),
+            )
+            self.store.add_tasks(goal.id, extra_tasks)
+            task.status = "failed"
+            return "continue"
+
+        task.status = "failed"
+        self.store.set_state(RuntimePhaseState.FAILED)
+        return "break"
+
     def _read_perception(self, goal: Goal, cycle: int) -> Dict[str, Any]:
         emotion_state: Dict[str, Any] = {}
         if callable(self.emotion_state_provider):
@@ -106,7 +130,7 @@ class Orchestrator:
 
     def run_goal(self, goal: Goal, max_cycles: int = 30) -> Dict[str, int]:
         self.store.add_goal(goal)
-        self.store.set_state(AgentState.PLANNING)
+        self.store.set_state(RuntimePhaseState.PLANNING)
         self._trace("planning", "initial planning started", {"goal_id": goal.id})
 
         initial_tasks = self.planner.plan(goal, self.store)
@@ -118,12 +142,12 @@ class Orchestrator:
             cycles += 1
 
             if self.store.stop_requested:
-                self.store.set_state(AgentState.STOPPED)
+                self.store.set_state(RuntimePhaseState.STOPPED)
                 self._trace("control", "stop requested")
                 break
 
             if self.store.pause_requested:
-                self.store.set_state(AgentState.PAUSED)
+                self.store.set_state(RuntimePhaseState.PAUSED)
                 self._trace("control", "paused")
                 break
 
@@ -141,7 +165,7 @@ class Orchestrator:
 
             stagnation = self.circuit_breaker.check_stagnation(cycle=cycles, now_ts=time.time())
             if stagnation.triggered:
-                self.store.set_state(AgentState.FAILED)
+                self.store.set_state(RuntimePhaseState.FAILED)
                 self._trace("circuit_break", "no progress", {"reason": stagnation.reason, "details": stagnation.details})
                 break
 
@@ -159,9 +183,9 @@ class Orchestrator:
                 has_done = any(t.status == "done" for t in terminal)
                 has_blocked = any(t.status == "blocked" for t in terminal)
                 if has_done and (not has_blocked):
-                    self.store.set_state(AgentState.COMPLETED)
+                    self.store.set_state(RuntimePhaseState.COMPLETED)
                 else:
-                    self.store.set_state(AgentState.FAILED)
+                    self.store.set_state(RuntimePhaseState.FAILED)
                 break
 
             if issues_by_task.get(str(task.id)):
@@ -189,7 +213,7 @@ class Orchestrator:
                 "recent_deltas": perception.recent_deltas,
             }
 
-            self.store.set_state(AgentState.EXECUTING)
+            self.store.set_state(RuntimePhaseState.EXECUTING)
             self._trace(
                 "executing",
                 "task execution started",
@@ -198,11 +222,11 @@ class Orchestrator:
             exec_rec = self.executor.execute(goal, task, self.tools, self.store)
             self.store.add_execution(exec_rec)
 
-            self.store.set_state(AgentState.EVALUATING)
+            self.store.set_state(RuntimePhaseState.EVALUATING)
             passed, note = self.evaluator.evaluate(goal, task, exec_rec, self.store)
             self._trace("evaluating", "evaluation done", {"task_id": task.id, "passed": int(passed), "note": note})
 
-            self.store.set_state(AgentState.REFLECTING)
+            self.store.set_state(RuntimePhaseState.REFLECTING)
             reflection: ReflectionRecord = self.reflector.reflect(
                 goal, task, exec_rec, passed, note, self.store
             )
@@ -216,7 +240,7 @@ class Orchestrator:
                 continue
 
             if reflection.replan_required:
-                self.store.set_state(AgentState.REPLANNING)
+                self.store.set_state(RuntimePhaseState.REPLANNING)
                 extra_tasks = self.planner.replan(goal, self.store, reflection)
                 action_fp = action_fingerprint(
                     ExecutableSubgoal(
@@ -233,7 +257,7 @@ class Orchestrator:
                 self.store.replan_actions.append(action_fp)
                 if cb_replan.triggered:
                     task.status = "failed"
-                    self.store.set_state(AgentState.FAILED)
+                    self.store.set_state(RuntimePhaseState.FAILED)
                     self._trace("circuit_break", "replan loop circuit break", {"reason": cb_replan.reason})
                     break
                 self.store.add_tasks(goal.id, extra_tasks)
@@ -261,35 +285,13 @@ class Orchestrator:
             cb_err = self.circuit_breaker.on_error(subgoal_id=str(task.id), fingerprint=decision.fingerprint)
             if cb_err.triggered:
                 task.status = "failed"
-                self.store.set_state(AgentState.FAILED)
+                self.store.set_state(RuntimePhaseState.FAILED)
                 self._trace("circuit_break", "same error repeated", {"task_id": task.id, "reason": cb_err.reason})
                 break
 
-            if decision.action.value == "retry" and task.attempt_count < task.max_attempts:
-                task.status = "pending"
+            dispatch_result = self._dispatch_failure_decision(goal=goal, task=task, decision=decision)
+            if dispatch_result == "continue":
                 continue
-            if decision.action.value in {"ask_user", "repair_auth"}:
-                task.status = "blocked"
-                continue
-            if decision.action.value in {"local_replan", "local_replan_with_constraints"}:
-                self.store.set_state(AgentState.REPLANNING)
-                extra_tasks = self.planner.replan(
-                    goal,
-                    self.store,
-                    ReflectionRecord(
-                        goal_id=goal.id,
-                        task_id=task.id,
-                        action="replan",
-                        reason=decision.reason,
-                        replan_required=True,
-                    ),
-                )
-                self.store.add_tasks(goal.id, extra_tasks)
-                task.status = "failed"
-                continue
-
-            task.status = "failed"
-            self.store.set_state(AgentState.FAILED)
             break
 
         done = len([t for t in self.store.list_tasks(goal.id) if t.status == "done"])

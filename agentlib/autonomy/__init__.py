@@ -15,13 +15,15 @@ from .models import (
 )
 from .orchestrator import Orchestrator
 from .scene_runtime import SceneRuntime
-from .state import AgentState, SceneDelta, SceneState
+from .shell_adapters import MockShellAdapter
+from .state import AgentState, RuntimePhaseState, SceneDelta, SceneState
 from .store import InMemoryStateStore, ScenePerception, SceneSnapshot
 from .tool_registry import InMemoryToolRegistry
 from .tracing import TraceEvent, TraceHook, console_trace_hook
 
 __all__ = [
     "AgentState",
+    "RuntimePhaseState",
     "SceneState",
     "SceneDelta",
     "SceneSnapshot",
@@ -49,6 +51,7 @@ __all__ = [
     "MOTOR_CODE_COMMAND_MISMATCH",
     "ShellState",
     "Orchestrator",
+    "MockShellAdapter",
     "TraceEvent",
     "TraceHook",
     "console_trace_hook",
