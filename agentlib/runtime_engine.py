@@ -30,15 +30,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from agent_kernel.adapters import CodexCodeAdapter, GLM5PlannerAdapter
 from agent_kernel.compile_check import action_plan_gate_check
-from agent_kernel.judge import V15Judge
-from agent_kernel.kernel import AgentKernel
-from agent_kernel.planner import V15Planner
 from agent_kernel.schemas import AgentState as KernelAgentState
 from agent_kernel.schemas import ExecutableSubgoal, Predicate, RetryPolicy, SubgoalState, SuccessCriterion
 from agent_kernel.schemas import Task as KernelTask
-from agent_kernel.worker import SpecialistRouterWorker
 
 from .advanced_decision import AdvancedDecisionConfig, generate_reply, load_advanced_decision_config
 from .autodebug import auto_debug_python_file, selfcheck_python_target
@@ -67,6 +62,7 @@ from .semantic_intent_lane import SemanticIntentLane
 from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_speech_config, save_wav, ssml_prosody_from_state
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
 from .autonomy.actuation import ActionEnvelope, DialogueExecutor, InteractionExecutor, SceneEffectExecutor
+from .selfdrive.session import build_selfdrive_kernel, build_selfdrive_session_state
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
 from .web_search import web_search
 
@@ -457,44 +453,35 @@ class RuntimeEngine:
         self._autofix_noop_streak = 0
         self._autofix_lock = threading.Lock()
         self._ide_autopilot_consecutive_failures = 0
-        self._selfdrive_lock = threading.Lock()
-        self._selfdrive_active = False
-        self._selfdrive_goal = ""
-        self._selfdrive_deadline_ts = 0.0
-        self._selfdrive_unbounded = False
-        self._selfdrive_started_ts = 0.0
-        self._selfdrive_next_ts = 0.0
-        self._selfdrive_last_heartbeat_ts = 0.0
-        self._selfdrive_heartbeat_sec = self._env_float("SELFDRIVE_HEARTBEAT_SEC", 30.0, min_v=10.0)
-        self._selfdrive_step_index = 0
-        self._selfdrive_step_gap_sec = 20.0
-        self._selfdrive_autonomy_level = "L1"
-        self._selfdrive_budget_override_steps: Optional[int] = None
-        self._selfdrive_mode = self._env_str("SELFDRIVE_KERNEL_MODE", "kernel_v16", fallback_on_empty=True)
-        self._selfdrive_steps: List[Dict[str, str]] = []
-        self._selfdrive_receipt: Dict[str, Any] = {}
-        self._selfdrive_file_snapshot: Dict[str, tuple[float, int]] = {}
-        self._selfdrive_actions: List[Dict[str, Any]] = []
-        self._selfdrive_tests: List[Dict[str, Any]] = []
-        self._selfdrive_brief_path = ""
-        self._selfdrive_brief_text = ""
-        self._selfdrive_heartbeat_log_path = self._env_str(
-            "SELFDRIVE_HEARTBEAT_LOG_PATH", os.path.join("outputs", "selfdrive_heartbeat.log")
-        )
-        self._selfdrive_api_audit_log_path = self._env_str(
-            "SELFDRIVE_API_AUDIT_LOG_PATH", os.path.join("outputs", "selfdrive_api_audit.log")
-        )
-        self._actuation_receipt_log_path = self._env_str(
-            "ACTUATION_RECEIPT_LOG_PATH", os.path.join("outputs", "actuation_receipts.jsonl")
-        )
+        self._selfdrive_state = build_selfdrive_session_state(env_float=self._env_float, env_str=self._env_str)
+        self._selfdrive_lock = self._selfdrive_state.lock
+        self._selfdrive_active = self._selfdrive_state.active
+        self._selfdrive_goal = self._selfdrive_state.goal
+        self._selfdrive_deadline_ts = self._selfdrive_state.deadline_ts
+        self._selfdrive_unbounded = self._selfdrive_state.unbounded
+        self._selfdrive_started_ts = self._selfdrive_state.started_ts
+        self._selfdrive_next_ts = self._selfdrive_state.next_ts
+        self._selfdrive_last_heartbeat_ts = self._selfdrive_state.last_heartbeat_ts
+        self._selfdrive_heartbeat_sec = self._selfdrive_state.heartbeat_sec
+        self._selfdrive_step_index = self._selfdrive_state.step_index
+        self._selfdrive_step_gap_sec = self._selfdrive_state.step_gap_sec
+        self._selfdrive_autonomy_level = self._selfdrive_state.autonomy_level
+        self._selfdrive_budget_override_steps = self._selfdrive_state.budget_override_steps
+        self._selfdrive_mode = self._selfdrive_state.mode
+        self._selfdrive_steps = self._selfdrive_state.steps
+        self._selfdrive_receipt = self._selfdrive_state.receipt
+        self._selfdrive_file_snapshot = self._selfdrive_state.file_snapshot
+        self._selfdrive_actions = self._selfdrive_state.actions
+        self._selfdrive_tests = self._selfdrive_state.tests
+        self._selfdrive_brief_path = self._selfdrive_state.brief_path
+        self._selfdrive_brief_text = self._selfdrive_state.brief_text
+        self._selfdrive_heartbeat_log_path = self._selfdrive_state.heartbeat_log_path
+        self._selfdrive_api_audit_log_path = self._selfdrive_state.api_audit_log_path
+        self._actuation_receipt_log_path = self._selfdrive_state.actuation_receipt_log_path
         self._actuation_trace_buffer: List[Dict[str, Any]] = []
-        self._selfdrive_kernel = AgentKernel(
-            planner=V15Planner(),
-            worker=SpecialistRouterWorker(
-                planner_adapter=GLM5PlannerAdapter(client=self._glm5_plan_for_selfdrive),
-                code_adapter=CodexCodeAdapter(client=self._codex_execute_for_selfdrive),
-            ),
-            judge=V15Judge(autonomous_mode=True),
+        self._selfdrive_kernel = build_selfdrive_kernel(
+            planner_adapter=self._glm5_plan_for_selfdrive,
+            code_adapter=self._codex_execute_for_selfdrive,
         )
         self._selfdrive_kernel_state: Optional[KernelAgentState] = None
         self._selfdrive_checkpoint_path = self._env_str(

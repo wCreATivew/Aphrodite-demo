@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from .circuit_breaker import CircuitBreaker
 from .compile_check import CompileIssue, plan_compile_check
 from .failure_router import classify_failure, is_retryable_failure
-from .judge import SimpleJudge
 from .local_replan import action_fingerprint, apply_local_replan, compute_descendants
 from .persistence import save_state_json
 from .planner import SimplePlanner
@@ -34,12 +33,9 @@ class AgentKernel:
         self,
         planner: Optional[SimplePlanner] = None,
         worker: Optional[SimpleWorker] = None,
-        judge: Optional[SimpleJudge] = None,
     ):
         self.planner = planner or SimplePlanner()
         self.worker = worker or SimpleWorker()
-        # Kept for backward compatibility, but scheduling now uses FSM path directly.
-        self.judge = judge or SimpleJudge()
         self.circuit_breaker = CircuitBreaker(
             same_error_limit=2,
             same_action_replan_limit=3,

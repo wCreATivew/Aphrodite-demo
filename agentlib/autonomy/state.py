@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
-class AgentState(str, Enum):
+class RuntimePhaseState(str, Enum):
     IDLE = "idle"
     PLANNING = "planning"
     EXECUTING = "executing"
@@ -16,6 +16,10 @@ class AgentState(str, Enum):
     COMPLETED = "completed"
     STOPPED = "stopped"
     FAILED = "failed"
+
+
+# Backward-compat alias (to be removed after downstream migration).
+AgentState = RuntimePhaseState
 
 
 @dataclass

@@ -3,8 +3,15 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional
+
+from agent_kernel.schemas import (
+    ExecutableSubgoal,
+    RetryPolicy,
+    RuntimeEventLifecycle as EmbodiedLifecycle,
+    RuntimeEventType as EmbodiedEventType,
+    SubgoalState,
+)
 
 
 def _new_id(prefix: str) -> str:
@@ -36,45 +43,6 @@ class Task:
     success_criteria: List[Dict[str, Any]] = field(default_factory=list)
     failure_modes: List[Dict[str, Any]] = field(default_factory=list)
     fallback: Dict[str, Any] = field(default_factory=dict)
-
-
-class SubgoalState(str, Enum):
-    DRAFT = "DRAFT"
-    READY = "READY"
-    RUNNING = "RUNNING"
-    DONE = "DONE"
-    FAILED_RETRYABLE = "FAILED_RETRYABLE"
-    BLOCKED = "BLOCKED"
-    FAILED_FATAL = "FAILED_FATAL"
-    SKIPPED = "SKIPPED"
-
-
-class EmbodiedLifecycle(str, Enum):
-    QUEUED = "queued"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    DROPPED = "dropped"
-
-
-class EmbodiedEventType(str, Enum):
-    INPUT_VISUAL_PSEUDO = "input.visual.pseudo"
-    INPUT_AUDIO_PSEUDO = "input.audio.pseudo"
-    INPUT_TOUCH_PSEUDO = "input.touch.pseudo"
-    INPUT_OLFACTORY_PSEUDO = "input.olfactory.pseudo"
-    OUTPUT_SCENE_ACTION = "output.scene.action"
-    OUTPUT_DIALOG_UTTERANCE = "output.dialog.utterance"
-    OUTPUT_INTERACTION_FEEDBACK = "output.interaction.feedback"
-    INTERNAL_BRAIN_DECISION = "internal.brain.decision"
-    INTERNAL_STATE_UPDATED = "internal.state.updated"
-    INTERNAL_MEMORY_WRITE = "internal.memory.write"
-
-
-@dataclass
-class RetryPolicy:
-    max_attempts: int = 2
-    backoff: str = "exponential"
-    base_delay_ms: int = 300
 
 
 MOTOR_CODE_OK = "ok"
@@ -116,24 +84,6 @@ class ShellState:
     status: str = "idle"
     pose: Dict[str, Any] = field(default_factory=dict)
     held_object: str = ""
-
-
-@dataclass
-class ExecutableSubgoal:
-    id: str
-    intent: str
-    executor_type: str
-    tool_name: str
-    inputs: Dict[str, Any] = field(default_factory=dict)
-    dependencies: List[str] = field(default_factory=list)
-    preconditions: List[Dict[str, Any]] = field(default_factory=list)
-    success_criteria: List[Dict[str, Any]] = field(default_factory=list)
-    failure_modes: List[Dict[str, Any]] = field(default_factory=list)
-    fallback: Dict[str, Any] = field(default_factory=dict)
-    retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
-    state: SubgoalState = SubgoalState.DRAFT
-    attempt_count: int = 0
-    last_error: str = ""
 
 
 @dataclass

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .models import ExecutionRecord, Goal, ReflectionRecord, Task
 from .scene_runtime import SceneRuntime
-from .state import AgentState, SceneActionReceipt, SceneDelta, SceneInteractionOutcome, SceneState
+from .state import RuntimePhaseState, SceneActionReceipt, SceneDelta, SceneInteractionOutcome, SceneState
 from .tracing import TraceEvent
 
 
@@ -44,7 +44,7 @@ class ScenePerception:
 
 @dataclass
 class InMemoryStateStore:
-    state: AgentState = AgentState.IDLE
+    state: RuntimePhaseState = RuntimePhaseState.IDLE
     goals: Dict[str, Goal] = field(default_factory=dict)
     tasks_by_goal: Dict[str, List[Task]] = field(default_factory=dict)
     executions: List[ExecutionRecord] = field(default_factory=list)
@@ -179,7 +179,7 @@ class InMemoryStateStore:
             ],
         )
 
-    def set_state(self, state: AgentState) -> None:
+    def set_state(self, state: RuntimePhaseState) -> None:
         self.state = state
 
     def set_latest_perception(self, snapshot: Dict[str, object]) -> None:
