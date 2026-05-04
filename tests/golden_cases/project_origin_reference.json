@@ -1,0 +1,1 @@
+{"input":"这个就是 Aphrodite 最早的那个起点，不是功能需求。","expected":{"event_type":"memory_reference","memory_type":"project_origin","memory_relevance_min":0.8,"recall_importance_min":0.75,"requires_pause_min":0.7,"requires_stillness_min":0.65}}

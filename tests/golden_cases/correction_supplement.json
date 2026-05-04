@@ -1,0 +1,1 @@
+{"input":"不是，我刚才说的是工程路线，不是视觉风格。","expected":{"event_type_any":["correction","supplement"],"speech_act":"correction","asks_for_analysis_min":0.5,"memory_relevance_min":0.4,"dependency_risk_max":0.2}}

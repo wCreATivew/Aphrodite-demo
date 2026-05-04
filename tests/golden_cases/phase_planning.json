@@ -1,0 +1,1 @@
+{"input":"下一阶段先别做 renderer，先把解释层做稳。","expected":{"event_type":"project_planning","speech_act":"instruction","asks_for_analysis_min":0.5,"asks_for_solution_min":0.5,"memory_type_any":["engineering_plan","body_mind_design"],"dependency_risk_max":0.2,"confidence_overall_min":0.45}}

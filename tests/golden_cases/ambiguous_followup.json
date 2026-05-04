@@ -1,0 +1,1 @@
+{"input":"对，就这个。","expected":{"event_type_any":["supplement","unknown"],"confidence_overall_max":0.5,"uncertainty_min":0.6,"memory_relevance_max":0.3,"dependency_risk_max":0.2}}

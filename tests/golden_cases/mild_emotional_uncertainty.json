@@ -1,0 +1,1 @@
+{"input":"我有点不确定这个方向是不是太自我了。","expected":{"event_type_any":["self_disclosure","project_planning"],"uncertainty_min":0.75,"recognition_need_min":0.6,"dependency_risk_max":0.3,"asks_for_reflection_min":0.65,"asks_for_reassurance_min":0.5,"needs_boundary":false,"not_event_type":"dependency_expression"}}

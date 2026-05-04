@@ -1,0 +1,1 @@
+{"input":"这个 runtime 入口是不是应该从 _brain_loop 接进去，而不是单独写一个新 loop？","expected":{"event_type_any":["technical_question","project_planning"],"topic":"runtime_or_engineering","asks_for_analysis_min":0.7,"asks_for_solution_min":0.6,"dependency_risk_max":0.2,"memory_relevance_min":0.4,"requires_pause_max":0.5}}

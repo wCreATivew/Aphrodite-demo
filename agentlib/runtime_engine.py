@@ -75,6 +75,7 @@ from src.core.trace import PresenceTrace
 from src.memory.memory_gate import decide_persistence
 from src.relationship.relationship_engine import apply_dependency_guard
 from src.body.action_mixer import mix_action_weights
+from src.interpreter import InputInterpreter
 
 
 DEFAULT_RAG_KB = [
@@ -255,6 +256,7 @@ class RuntimeEngine:
             required_runtime_triggers=REQUIRED_RUNTIME_TRIGGERS,
         )
         self.immediate_protocol = ImmediateReplyProtocol()
+        self.input_interpreter = InputInterpreter()
         self.nl_control_overlay_min_margin = self._env_float("NL_CONTROL_OVERLAY_MIN_MARGIN", 0.12)
         self.debug_local_model_min_confidence = self._env_float("DEBUG_LOCAL_MODEL_MIN_CONFIDENCE", 0.68)
         self.debug_state_window_sec = self._env_float("DEBUG_STATE_WINDOW_SEC", 600.0)
@@ -2087,13 +2089,29 @@ class RuntimeEngine:
     def _interpret_event_placeholder(self, user_text: str) -> Dict[str, Any]:
         txt = str(user_text or "")
         low = txt.lower()
-        semantic_event = "technical_question" if any(k in low for k in ["how", "bug", "code", "python", "为什么", "怎么"]) else "casual_chat"
-        dependency_risk = 0.9 if any(k in txt for k in ["只需要你", "不需要别人", "only need you", "need only you"]) else 0.0
-        return {
-            "semantic_event": {"type": semantic_event},
-            "relationship_signal": {"dependency_risk": dependency_risk},
-            "confidence": {"event": 0.7},
+        prev = self.mon.get("presence_last_trace") if isinstance(self.mon.get("presence_last_trace"), dict) else {}
+        prev_event = prev.get("interpreted_event") if isinstance(prev.get("interpreted_event"), dict) else {}
+        context = {
+            "turn_index": int(self.turn_index or 0),
+            "previous_event_type": ((prev_event.get("semantic_event") or {}).get("event_type") if isinstance(prev_event.get("semantic_event"), dict) else None),
+            "previous_topic": ((prev_event.get("semantic_event") or {}).get("topic") if isinstance(prev_event.get("semantic_event"), dict) else None),
+            "previous_route": prev.get("route"),
+            "recent_user_text": prev.get("raw_input"),
         }
+        try:
+            return self.input_interpreter.interpret(txt, context=context)
+        except Exception:
+            return {
+                "semantic_event": {"event_type": "unknown", "topic": "general", "speech_act": "unknown", "explicit_question": False, "requires_answer": False, "is_user_visible": True},
+                "affective_signal": {"valence": 0.0, "arousal": 0.2, "intensity": 0.2, "uncertainty": 0.8},
+                "goal_signal": {"asks_for_solution": 0.0, "asks_for_reassurance": 0.0, "asks_for_reflection": 0.0, "asks_for_analysis": 0.0, "asks_for_presence": 0.0, "asks_for_challenge": 0.0},
+                "relationship_signal": {"recognition_need": 0.2, "trust_signal": 0.2, "dependency_risk": 0.0, "boundary_pressure": 0.0, "over_intimacy_risk": 0.0, "familiarity_signal": 0.2},
+                "memory_trigger_signal": {"memory_relevance": 0.1, "memory_type": "unknown", "recall_importance": 0.1, "emotional_salience": 0.1, "self_narrative_relevance": 0.1},
+                "boundary_signal": {"dependency_risk": 0.0, "emotional_overload": 0.0, "needs_boundary": False, "needs_human_redirect": False, "over_intimacy_risk": 0.0},
+                "performance_signal": {"requires_pause": 0.2, "requires_softness": 0.2, "requires_stillness": 0.2, "requires_direct_eye_contact": 0.2, "requires_lightness": 0.2},
+                "confidence": {"overall": 0.2, "semantic_event": 0.2, "affective_signal": 0.2, "goal_signal": 0.2, "relationship_signal": 0.2, "memory_trigger_signal": 0.2, "boundary_signal": 0.2, "performance_signal": 0.2},
+                "warnings": ["interpreter_failed"],
+            }
 
     def _presence_min_flow(self, *, user_text: str, assistant_text: str, trace_id: str, event_id: str, route: str = "llm", latency_tier: str = "tier_1") -> Dict[str, Any]:
         trace = PresenceTrace(raw_input=user_text, event_version=int(self.turn_index or 0))
@@ -2110,7 +2128,7 @@ class RuntimeEngine:
             "type": "episodic",
             "importance": 0.5,
             "emotional_salience": 0.3,
-            "confidence": float(interpreted.get("confidence", {}).get("event", 0.0)),
+            "confidence": float(interpreted.get("confidence", {}).get("overall", 0.0)),
             "first_seen": True,
             "speculative": False,
             "evidence_trace_ids": [str(trace_id)],
@@ -2124,15 +2142,18 @@ class RuntimeEngine:
             "distance_preference": 0.2,
             "permission_to_approach": 0.5,
         }))
-        risk = float(interpreted.get("relationship_signal", {}).get("dependency_risk", 0.0))
+        risk = float(interpreted.get("boundary_signal", {}).get("dependency_risk", interpreted.get("relationship_signal", {}).get("dependency_risk", 0.0)))
         rel_next = apply_dependency_guard(base_rel, dependency_risk=risk)
         rel_delta = {k: rel_next.get(k) for k in rel_next.keys() if rel_next.get(k) != base_rel.get(k)}
         if rel_delta:
             self.state_authority.apply_delta({"relationship": rel_next}, source="relationship_guard", rationale=f"dependency_risk={risk}")
         trace.relationship_delta = rel_delta
 
-        weights = {"gaze_user": 0.7, "gaze_down": 0.8 if risk > 0.5 else 0.3, "posture_withdraw": 0.6 if risk > 0.5 else 0.1, "lean_forward": 0.6 if risk > 0.5 else 0.1, "micro_smile": 0.4}
-        body_influence = {"motion_suppression": 0.8 if risk > 0.5 else 0.2}
+        perf = interpreted.get("performance_signal", {})
+        mem_sig = interpreted.get("memory_trigger_signal", {})
+        boundary_sig = interpreted.get("boundary_signal", {})
+        weights = {"gaze_user": max(0.1, 0.7 - 0.4 * float(perf.get("requires_lightness", 0.0))), "gaze_down": 0.8 if risk > 0.5 else 0.3, "posture_withdraw": 0.6 if risk > 0.5 else 0.1, "lean_forward": 0.6 if risk > 0.5 else 0.1, "micro_smile": 0.4}
+        body_influence = {"motion_suppression": min(1.0, (0.8 if risk > 0.5 else 0.2) + 0.3 * float(perf.get("requires_stillness", 0.0)) + 0.2 * float(boundary_sig.get("needs_boundary", False)) + 0.2 * float(mem_sig.get("memory_relevance", 0.0)))}
         trace.action_basis_weights = weights
         trace.body_influence = body_influence
         mix = mix_action_weights(weights, body_influence)

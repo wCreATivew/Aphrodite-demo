@@ -1,0 +1,1 @@
+{"input":"补充一下，这一步不要改公开 API。","expected":{"event_type":"supplement","speech_act":"supplement","topic":"engineering_constraint","asks_for_solution_min":0.5,"asks_for_analysis_min":0.5,"dependency_risk_max":0.2,"confidence_overall_max":0.65}}

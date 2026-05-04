@@ -1,0 +1,1 @@
+{"input":"这一版太像商业手游了，我要更安静一点。","expected":{"event_type":"aesthetic_judgment","topic":"visual_direction","asks_for_solution_min":0.6,"memory_type":"visual_direction","dependency_risk_max":0.2,"requires_lightness_min":0.75}}

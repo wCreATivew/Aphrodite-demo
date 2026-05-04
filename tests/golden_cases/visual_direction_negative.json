@@ -1,0 +1,1 @@
+{"input":"这个太像 AI 女友了，不要这种方向。","expected":{"event_type":"aesthetic_judgment","topic":"visual_direction","memory_type_any":["visual_direction","safety_boundary"],"over_intimacy_risk_min":0.65,"asks_for_solution_min":0.7,"dependency_risk_max":0.25,"requires_lightness_min":0.5,"semantic_confidence_min":0.65}}
