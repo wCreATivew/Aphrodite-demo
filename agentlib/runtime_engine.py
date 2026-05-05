@@ -68,6 +68,8 @@ from .speech_azure import AzureSpeechConfig, azure_tts_synthesize, load_azure_sp
 from .style_policy import SelfLearningStylePolicy, infer_reward_from_user_text, style_guidance_from_action
 from .autonomy.actuation import ActionEnvelope, DialogueExecutor, InteractionExecutor, SceneEffectExecutor
 from .task_run import TaskRun, TaskRunRecorder, TaskRunStep
+from src.interpreter.input_interpreter import InputInterpreter
+from src.interpreter.schema import unknown_output
 from .web_search import web_search
 
 from src.core.state_authority import StateAuthority
