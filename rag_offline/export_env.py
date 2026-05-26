@@ -14,7 +14,7 @@ def _safe_get(d: Dict[str, Any], key: str, default: Any) -> Any:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tune-report", required=True, help="output of tune_rag_params.py")
-    ap.add_argument("--output", default="rag_offline/best_rag.env")
+    ap.add_argument("--output", default="var/reports/rag/best_rag.env")
     ap.add_argument("--embed-model", default="", help="optional model path to export")
     args = ap.parse_args()
 

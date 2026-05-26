@@ -38,8 +38,8 @@ py rag_offline\conversation_train.py `
   --inputs .\your_texts .\your_videos `
   --rag-mode hybrid `
   --top-k 3 `
-  --triplets-out rag_offline\conversation_triplets.jsonl `
-  --sessions-out rag_offline\conversation_sessions.jsonl `
+  --triplets-out var\data\rag\conversation_triplets.jsonl `
+  --sessions-out var\data\rag\conversation_sessions.jsonl `
   --auto-train-every 20
 ```
 
@@ -61,15 +61,15 @@ For videos:
 Streamlit mode:
 ```powershell
 streamlit run rag_offline\replay_viewer.py -- `
-  --sessions rag_offline\conversation_sessions.jsonl `
-  --triplets rag_offline\conversation_triplets.jsonl
+  --sessions var\data\rag\conversation_sessions.jsonl `
+  --triplets var\data\rag\conversation_triplets.jsonl
 ```
 
 CLI mode:
 ```powershell
 py rag_offline\replay_viewer.py `
-  --sessions rag_offline\conversation_sessions.jsonl `
-  --triplets rag_offline\conversation_triplets.jsonl `
+  --sessions var\data\rag\conversation_sessions.jsonl `
+  --triplets var\data\rag\conversation_triplets.jsonl `
   --cli `
   --limit 30
 ```
@@ -88,7 +88,7 @@ py rag_offline\prepare_triplets.py `
 py rag_offline\train_embedding.py `
   --triplets rag_offline\triplets.jsonl `
   --base-model BAAI/bge-small-zh-v1.5 `
-  --out-model monitor\rag_embed_model `
+  --out-model var\models\embedding\rag_embed_model `
   --epochs 1 `
   --batch-size 16
 ```
@@ -100,7 +100,8 @@ py rag_offline\eval_retrieval.py `
   --dataset rag_offline\evalset_template.jsonl `
   --rag-mode hybrid `
   --top-k 3 `
-  --embed-model monitor\rag_embed_model
+  --embed-model var\models\embedding\rag_embed_model `
+  --out var\reports\rag\eval_report.json
 ```
 
 ### 4) Tune runtime params
@@ -109,15 +110,15 @@ py rag_offline\eval_retrieval.py `
 py rag_offline\tune_rag_params.py `
   --dataset rag_offline\evalset_template.jsonl `
   --top-k 3 `
-  --out rag_offline\tune_report.json
+  --out var\reports\rag\tune_report.json
 ```
 
 ### 5) Export best params to env snippet
 
 ```powershell
 py rag_offline\export_env.py `
-  --tune-report rag_offline\tune_report.json `
-  --output rag_offline\best_rag.env
+  --tune-report var\reports\rag\tune_report.json `
+  --output var\reports\rag\best_rag.env
 ```
 
 Then merge `best_rag.env` into your project `.env`.
