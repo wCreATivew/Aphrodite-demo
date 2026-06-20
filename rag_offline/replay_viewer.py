@@ -122,8 +122,8 @@ def _streamlit_mode(rows: List[Dict[str, Any]]) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sessions", default="rag_offline/conversation_sessions.jsonl")
-    ap.add_argument("--triplets", default="rag_offline/conversation_triplets.jsonl")
+    ap.add_argument("--sessions", default="var/data/rag/conversation_sessions.jsonl")
+    ap.add_argument("--triplets", default="var/data/rag/conversation_triplets.jsonl")
     ap.add_argument("--cli", action="store_true", help="run in CLI mode")
     ap.add_argument("--limit", type=int, default=20, help="CLI preview size")
     args = ap.parse_args()

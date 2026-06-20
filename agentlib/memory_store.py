@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import numpy as np
@@ -30,6 +31,11 @@ from .learned_lists import LearnedLists, ListState, refresh_state
 
 
 _ZH_RE = re.compile(r"[\u4e00-\u9fff]+")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+GENERATED_ARTIFACT_ROOT = _REPO_ROOT / "var"
+DEFAULT_MEMORY_DB_PATH = GENERATED_ARTIFACT_ROOT / "db" / "memory.sqlite"
+DEFAULT_MEMORY_INDEX_PATH = GENERATED_ARTIFACT_ROOT / "indexes" / "memory.faiss"
+DEFAULT_MEMORY_IDS_PATH = GENERATED_ARTIFACT_ROOT / "indexes" / "memory_ids.npy"
 
 
 @dataclass(frozen=True)
@@ -277,9 +283,9 @@ class MemoryStore:
 
     def __init__(
         self,
-        db_path: str = "memory.sqlite",
-        index_path: str = "memory.faiss",
-        ids_path: str = "memory_ids.npy",
+        db_path: str = str(DEFAULT_MEMORY_DB_PATH),
+        index_path: str = str(DEFAULT_MEMORY_INDEX_PATH),
+        ids_path: str = str(DEFAULT_MEMORY_IDS_PATH),
         model_name: str = "BAAI/bge-small-zh-v1.5",
         device: Optional[str] = None,
         phrase_filter: Optional[PhraseFilter] = None,
@@ -296,6 +302,9 @@ class MemoryStore:
                 "sentence-transformers unavailable: "
                 f"{_SENTENCE_TRANSFORMERS_IMPORT_ERROR}"
             )
+
+        for artifact_path in (self.db_path, self.index_path, self.ids_path):
+            Path(artifact_path).parent.mkdir(parents=True, exist_ok=True)
 
         self.model = _SentenceTransformer(model_name, device=device)
         self.dim = self.model.get_sentence_embedding_dimension()

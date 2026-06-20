@@ -1,4 +1,5 @@
 from src.interpreter.input_interpreter import InputInterpreter
+from src.interpreter.schema import unknown_output
 
 
 def test_schema_complete_and_clipped_numeric_fields():
@@ -20,3 +21,11 @@ def test_schema_complete_and_clipped_numeric_fields():
     for sec, key in numeric_checks:
         v = float(out[sec][key])
         assert 0.0 <= v <= 1.0
+
+
+def test_unknown_output_compatibility_contract_preserves_warnings():
+    out = unknown_output(["interpreter_failed"])
+    assert out["semantic_event"]["type"] == "unknown"
+    assert out["memory_trigger_signal"]["memory_type"] == "none"
+    assert out["confidence"]["event"] == 0.3
+    assert out["warnings"] == ["interpreter_failed"]

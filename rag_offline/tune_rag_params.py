@@ -46,7 +46,7 @@ def main() -> int:
     ap.add_argument("--dataset", required=True, help="eval jsonl")
     ap.add_argument("--top-k", type=int, default=3)
     ap.add_argument("--rag-mode", default="hybrid", choices=["hybrid", "embedding", "keyword"])
-    ap.add_argument("--out", default="rag_offline/tune_report.json")
+    ap.add_argument("--out", default="var/reports/rag/tune_report.json")
     args = ap.parse_args()
 
     rows = read_jsonl(args.dataset)
